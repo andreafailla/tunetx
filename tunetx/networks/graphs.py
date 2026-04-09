@@ -1,13 +1,16 @@
-"""Build graphs from note groups, rhythm patterns, and audio summaries."""
+"""Build graphs from note groups, rhythms, scores, and audio summaries."""
 
 from __future__ import annotations
 
+from itertools import combinations
 from typing import Iterable
 
 import networkx as nx
 import numpy as np
+import music21 as m21
 
 from ..classes import PitchClassSet, RhythmSequence
+from ..io import MidiChordSlice, MidiScore, read_score
 from ..utils.distances import (
     _vector_distance_from_arrays,
     minimal_non_bijective_pitch_class_distance,
@@ -68,6 +71,148 @@ def _motif_relation(
             if inverted.transpose(steps).pcs == target_pcs:
                 return ("inversion", steps)
     return None
+
+
+def _coerce_score(score: str | MidiScore) -> MidiScore:
+    return read_score(score) if isinstance(score, str) else score
+
+
+def _validate_node_identity(node_identity: str) -> str:
+    if node_identity not in {"pitch_class", "midi"}:
+        raise ValueError("node_identity must be 'pitch_class' or 'midi'")
+    return node_identity
+
+
+def _pitch_class_note_label(pitch_class: int) -> str:
+    return PitchClassSet((pitch_class,)).label()
+
+
+def _midi_note_label(midi_pitch: int) -> str:
+    return m21.pitch.Pitch(midi=int(midi_pitch)).nameWithOctave
+
+
+def _slice_note_identities(
+    chord_slice: MidiChordSlice,
+    *,
+    node_identity: str,
+) -> list[int | str]:
+    if node_identity == "pitch_class":
+        return [_pitch_class_note_label(int(value)) for value in chord_slice.pitch_classes]
+    return [int(round(value)) for value in chord_slice.pitches]
+
+
+def _node_label(node: int | str, *, node_identity: str) -> str:
+    return str(node) if node_identity == "pitch_class" else _midi_note_label(int(node))
+
+
+def _ensure_note_node(
+    graph: nx.Graph | nx.DiGraph,
+    node: int | str,
+    *,
+    kind: str,
+    node_identity: str,
+) -> None:
+    if graph.has_node(node):
+        return
+    graph.add_node(node, label=_node_label(node, node_identity=node_identity), kind=kind, object=node)
+
+
+def melody_network(
+    score: str | MidiScore,
+    *,
+    node_identity: str = "pitch_class",
+    directed: bool = True,
+) -> nx.Graph | nx.DiGraph:
+    """Build a graph from note transitions between consecutive score slices.
+
+    Parameters
+    ----------
+    score : str or MidiScore
+        Path to a MIDI or MusicXML file, or a previously parsed `MidiScore`.
+    node_identity : {"pitch_class", "midi"}, default="pitch_class"
+        Node representation. ``"pitch_class"`` merges octave-equivalent notes
+        into note-name labels such as ``"C"``. ``"midi"`` keeps exact MIDI
+        pitches such as ``60`` and labels them with octave.
+    directed : bool, default=True
+        If ``True``, build a directed transition graph.
+
+    Returns
+    -------
+    networkx.Graph or networkx.DiGraph
+        Graph whose nodes are note identities and whose edges count
+        transitions between consecutive score slices.
+
+    Notes
+    -----
+    Edge metadata stores both ``count`` and ``weight`` as the observed
+    transition frequency.
+    """
+
+    identity_mode = _validate_node_identity(node_identity)
+    parsed = _coerce_score(score)
+    graph = _graph_class(directed)
+    slices = [_slice_note_identities(chord_slice, node_identity=identity_mode) for chord_slice in parsed.chords]
+
+    for notes in slices:
+        for note in notes:
+            _ensure_note_node(graph, note, kind="melody_note", node_identity=identity_mode)
+
+    for left_notes, right_notes in zip(slices, slices[1:]):
+        for left_note in left_notes:
+            for right_note in right_notes:
+                if graph.has_edge(left_note, right_note):
+                    graph[left_note][right_note]["count"] += 1
+                    graph[left_note][right_note]["weight"] = graph[left_note][right_note]["count"]
+                else:
+                    graph.add_edge(left_note, right_note, count=1, weight=1)
+    return graph
+
+
+def cooccurrence_network(
+    score: str | MidiScore,
+    *,
+    node_identity: str = "pitch_class",
+) -> nx.Graph:
+    """Build an undirected graph from notes that sound together in a score.
+
+    Parameters
+    ----------
+    score : str or MidiScore
+        Path to a MIDI or MusicXML file, or a previously parsed `MidiScore`.
+    node_identity : {"pitch_class", "midi"}, default="pitch_class"
+        Node representation. ``"pitch_class"`` merges octave-equivalent notes
+        into note-name labels such as ``"C"``. ``"midi"`` keeps exact MIDI
+        pitches such as ``60`` and labels them with octave.
+
+    Returns
+    -------
+    networkx.Graph
+        Undirected graph whose nodes are note identities and whose edges count
+        how often pairs of notes co-occur in the same score slice.
+
+    Notes
+    -----
+    Edge metadata stores both ``count`` and ``weight`` as the observed
+    co-occurrence frequency.
+    """
+
+    identity_mode = _validate_node_identity(node_identity)
+    parsed = _coerce_score(score)
+    graph = nx.Graph()
+    slices = [_slice_note_identities(chord_slice, node_identity=identity_mode) for chord_slice in parsed.chords]
+
+    for notes in slices:
+        for note in notes:
+            _ensure_note_node(graph, note, kind="cooccurrence_note", node_identity=identity_mode)
+        for left_note, right_note in combinations(notes, 2):
+            if left_note == right_note:
+                continue
+            if graph.has_edge(left_note, right_note):
+                graph[left_note][right_note]["count"] += 1
+                graph[left_note][right_note]["weight"] = graph[left_note][right_note]["count"]
+            else:
+                graph.add_edge(left_note, right_note, count=1, weight=1)
+    return graph
 
 
 def pitch_class_network(

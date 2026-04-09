@@ -40,3 +40,32 @@ Why this output? The graph records the small note motion between the two note gr
 >>> graph.number_of_edges() >= 1
 True
 ```
+
+## Build a melody transition graph
+
+```{doctest}
+>>> score = MidiScore(
+...     notes=tuple(),
+...     chords=(
+...         MidiChordSlice(pitches=(60.0, 72.0, 64.0), pitch_classes=(0, 4), start=0.0, duration=1.0, label="CE"),
+...         MidiChordSlice(pitches=(60.0, 67.0), pitch_classes=(0, 7), start=1.0, duration=1.0, label="CG"),
+...     ),
+...     tempo=120.0,
+...     meter="4/4",
+... )
+>>> graph = melody_network(score)
+>>> graph.number_of_nodes()
+3
+>>> graph["C"]["G"]["count"]
+1
+```
+
+## Build a co-occurrence graph
+
+```{doctest}
+>>> graph = cooccurrence_network(score)
+>>> graph.has_edge("C", "E")
+True
+>>> graph["C"]["E"]["count"]
+1
+```

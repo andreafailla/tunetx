@@ -79,10 +79,12 @@ from tunetx import MidiSet, PitchClassRow, PitchClassSet, RhythmSequence
 from tunetx.data import map_to_scale, resolve_scale, series_to_midi, series_to_note_events, sonify_series_to_wav
 from tunetx.io import MidiChordSlice, MidiNote, MidiScore, NoteEvent, extract_chord_slices, pitch_class_sequence_from_score, read_midi, read_score, write_midi
 from tunetx.networks import (
+    cooccurrence_network,
     describe_pitch_class_set,
     describe_rhythm_sequence,
     enumerate_pitch_class_sets,
     enumerate_rhythm_sequences,
+    melody_network,
     pitch_class_network,
     rhythm_network,
     score_network,
