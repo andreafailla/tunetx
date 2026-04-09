@@ -4,6 +4,7 @@ import numpy as np
 
 import tunetx
 from tunetx import MidiSet, PitchClassRow, PitchClassSet, RhythmSequence
+from tunetx.utils import minimal_non_bijective_pitch_class_distance, minimal_pitch_class_distance
 
 
 def test_top_level_exports_and_public_modules():
@@ -46,6 +47,29 @@ def test_pitch_class_set_operator_behavior():
     assert major.voice_leading_operator_name(minor) == "R(0,-1,0)"
     assert major.operator_name(minor) == "O(1)"
     assert major.apply_voice_leading("R(0,-1,0)").pcs == (0, 3, 7)
+
+
+def test_pitch_class_distance_metrics_are_stable():
+    major = (0, 4, 7)
+    minor = (0, 3, 7)
+
+    distance, mapping = minimal_pitch_class_distance(major, minor, metric="euclidean")
+    assert np.isclose(distance, 1.0)
+    np.testing.assert_array_equal(mapping, np.array([0, 3, 7]))
+
+    distance, mapping = minimal_pitch_class_distance(major, minor, metric="manhattan")
+    assert np.isclose(distance, 1.0)
+    np.testing.assert_array_equal(mapping, np.array([0, 3, 7]))
+
+    distance, mapping = minimal_pitch_class_distance(major, minor, metric="cosine")
+    assert np.isclose(distance, 0.003402757374382559)
+    np.testing.assert_array_equal(mapping, np.array([0, 3, 7]))
+
+
+def test_non_bijective_pitch_class_distance_is_stable():
+    distance, mapping = minimal_non_bijective_pitch_class_distance((0, 4, 7, 11), (0, 4, 7), metric="euclidean")
+    assert np.isclose(distance, 1.0)
+    np.testing.assert_array_equal(mapping, np.array([0, 0, 4, 7]))
 
 
 def test_pitch_class_row_behavior():

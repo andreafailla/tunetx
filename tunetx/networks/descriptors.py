@@ -12,6 +12,7 @@ from typing import Iterable
 import numpy as np
 
 from ..classes import PitchClassSet, RhythmSequence
+from ..classes._algorithms import compact_normal_order, cyclic_intervals, interval_vector
 from ..utils.collections import deduplicate
 
 
@@ -80,23 +81,34 @@ def enumerate_pitch_class_sets(
     """Enumerate a pitch-class space and normalize each item into the requested form."""
 
     source = tuple(row) if row is not None else tuple(range(tet))
+    if form == "prime":
+        def normalize(values: tuple[int, ...]) -> tuple[int, ...]:
+            array = np.asarray(values, dtype=int)
+            normal = compact_normal_order(array, tet)
+            normal_zero = tuple(int(value) for value in ((normal - normal[0]) % tet).tolist())
+            inverted = compact_normal_order((-array) % tet, tet)
+            inverted_zero = tuple(int(value) for value in ((inverted - inverted[0]) % tet).tolist())
+            return normal_zero if sum(normal_zero) <= sum(inverted_zero) else inverted_zero
+    elif form == "normal":
+        def normalize(values: tuple[int, ...]) -> tuple[int, ...]:
+            return tuple(int(value) for value in compact_normal_order(np.asarray(values, dtype=int), tet).tolist())
+    elif form in {"normal_zero", "normal-zero"}:
+        def normalize(values: tuple[int, ...]) -> tuple[int, ...]:
+            normal = compact_normal_order(np.asarray(values, dtype=int), tet)
+            return tuple(int(value) for value in ((normal - normal[0]) % tet).tolist())
+    elif form == "raw":
+        def normalize(values: tuple[int, ...]) -> tuple[int, ...]:
+            return values
+    else:
+        raise ValueError(f"unsupported pitch-class enumeration form: {form}")
+
     results: list[PitchClassSet] = []
     seen: set[tuple[int, ...]] = set()
     for combination in itertools.combinations(source, cardinality):
-        pcs = PitchClassSet(tuple(combination), tet=tet, unique=True, ordered=True)
-        if form == "prime":
-            normalized = pcs.prime_form()
-        elif form == "normal":
-            normalized = pcs.normal_order()
-        elif form in {"normal_zero", "normal-zero"}:
-            normalized = pcs.normal_zero_order()
-        elif form == "raw":
-            normalized = pcs
-        else:
-            raise ValueError(f"unsupported pitch-class enumeration form: {form}")
-        if normalized.pcs not in seen:
-            seen.add(normalized.pcs)
-            results.append(normalized)
+        normalized_values = normalize(tuple(int(value) for value in combination))
+        if normalized_values not in seen:
+            seen.add(normalized_values)
+            results.append(PitchClassSet(normalized_values, tet=tet, unique=False, ordered=False))
     return results
 
 
@@ -117,12 +129,18 @@ def describe_pitch_class_set(item: PitchClassSet | Iterable[int], tet: int = 12)
     """Describe a pitch-class set with common symbolic descriptors."""
 
     pcs = item if isinstance(item, PitchClassSet) else PitchClassSet(tuple(item), tet=tet)
+    values = pcs.to_numpy()
+    normal = compact_normal_order(values, tet)
+    normal_zero = tuple(int(value) for value in ((normal - normal[0]) % tet).tolist())
+    inverted = compact_normal_order((-values) % tet, tet)
+    inverted_zero = tuple(int(value) for value in ((inverted - inverted[0]) % tet).tolist())
+    prime_form = normal_zero if sum(normal_zero) <= sum(inverted_zero) else inverted_zero
     return PitchClassDescription(
         label=pcs.label(),
         pitch_class_set=pcs,
-        prime_form=pcs.prime_form().pcs,
-        interval_vector=tuple(int(value) for value in pcs.interval_vector().tolist()),
-        lis_vector=tuple(int(value) for value in pcs.lis_vector().tolist()),
+        prime_form=prime_form,
+        interval_vector=tuple(int(value) for value in interval_vector(values, tet).tolist()),
+        lis_vector=tuple(int(value) for value in cyclic_intervals(normal, tet).astype(int).tolist()),
     )
 
 

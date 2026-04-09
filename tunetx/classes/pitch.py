@@ -43,15 +43,12 @@ def _label_for_pitch_classes(pitch_classes: Sequence[int], tet: int) -> str:
 
 
 def _best_rotation_difference(a: np.ndarray, b: np.ndarray, tet: int) -> np.ndarray:
-    distances = np.zeros(len(b), dtype=float)
-    for index in range(len(b)):
-        rotated = np.roll(b, index)
-        diff = a - rotated
-        diff = np.where(diff >= tet / 2, diff - tet, diff)
-        diff = np.where(diff < -tet / 2, diff + tet, diff)
-        distances[index] = np.dot(np.abs(diff), np.abs(diff))
-    rotated = np.roll(b, int(np.argmin(distances)))
-    diff = rotated - a
+    rotations = np.vstack([np.roll(b, index) for index in range(len(b))])
+    diffs = a - rotations
+    diffs = np.where(diffs >= tet / 2, diffs - tet, diffs)
+    diffs = np.where(diffs < -tet / 2, diffs + tet, diffs)
+    distances = np.sum(np.abs(diffs) * np.abs(diffs), axis=1)
+    diff = rotations[int(np.argmin(distances))] - a
     diff = np.where(diff >= tet / 2, diff - tet, diff)
     diff = np.where(diff < -tet / 2, diff + tet, diff)
     return diff.astype(int)
@@ -130,9 +127,9 @@ class PitchClassSet:
     def intervals(self) -> np.ndarray:
         return cyclic_intervals(self.to_numpy(), self.tet).astype(int)
 
-    def operator_name(self, other: "PitchClassSet") -> str:
-        left = self.normal_order().to_numpy()
-        right = other.normal_order().to_numpy()
+    def operator_name(self, other: "PitchClassSet", *, normalize: bool = True) -> str:
+        left = self.normal_order().to_numpy() if normalize else self.to_numpy()
+        right = other.normal_order().to_numpy() if normalize else other.to_numpy()
         diff = np.sort(np.abs(_best_rotation_difference(left, right, self.tet)))
         diff = np.trim_zeros(diff)
         if len(diff) == 0:
