@@ -12,6 +12,8 @@ from tunetx.networks import (
     describe_timbre,
     enumerate_pitch_class_sets,
     enumerate_rhythm_sequences,
+    motif_network,
+    multilayer_network,
     pitch_class_network,
     rhythm_network,
     score_network,
@@ -66,6 +68,25 @@ def test_pitch_and_voice_leading_networks():
     assert edge[2]["operator"] == "O(1)"
 
 
+def test_motif_network_detects_transposition_and_inversion():
+    items = [
+        PitchClassSet((0, 4, 7)),
+        PitchClassSet((3, 7, 10)),
+        PitchClassSet((0, 5, 8)),
+        PitchClassSet((0, 2, 7)),
+    ]
+
+    graph = motif_network(items)
+    assert graph.number_of_nodes() == 4
+    assert graph.has_edge(0, 1)
+    assert graph.edges[0, 1]["relation"] == "transposition"
+    assert graph.edges[0, 1]["label"] == "T3"
+    assert graph.has_edge(0, 2)
+    assert graph.edges[0, 2]["relation"] == "inversion"
+    assert graph.edges[0, 2]["label"] == "I0"
+    assert not graph.has_edge(0, 3)
+
+
 def test_rhythm_timbre_and_score_networks(tmp_path):
     rhythm_graph = rhythm_network(
         [RhythmSequence(("q", "e")), RhythmSequence(("q", "s")), RhythmSequence(("e", "s"))],
@@ -92,6 +113,24 @@ def test_rhythm_timbre_and_score_networks(tmp_path):
     graph = score_network(str(midi_path), max_distance=12.0)
     assert graph.number_of_nodes() >= 2
     assert all("label" in data for _, data in graph.nodes(data=True))
+
+
+def test_multilayer_network_stacks_layers_and_aligns_by_index():
+    graph = multilayer_network(
+        pitch_items=[PitchClassSet((0, 4, 7)), PitchClassSet((0, 3, 7))],
+        rhythm_items=[RhythmSequence(("q", "e")), RhythmSequence(("q", "s"))],
+        pitch_kwargs={"max_distance": 3.0},
+        rhythm_kwargs={"max_distance": 3.0},
+    )
+
+    assert ("pitch", 0) in graph.nodes
+    assert ("rhythm", 0) in graph.nodes
+    assert graph.nodes[("pitch", 0)]["layer"] == "pitch"
+    assert any(data["layer"] == "pitch" for _, _, data in graph.edges(data=True))
+    assert any(data["layer"] == "rhythm" for _, _, data in graph.edges(data=True))
+    assert graph.has_edge(("pitch", 0), ("rhythm", 0))
+    alignment_edges = graph.get_edge_data(("pitch", 0), ("rhythm", 0))
+    assert any(data["layer"] == "alignment" for data in alignment_edges.values())
 
 
 def test_score_network_matches_preparsed_score(tmp_path):

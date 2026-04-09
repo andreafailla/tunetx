@@ -32,6 +32,44 @@ def _graph_class(directed: bool) -> nx.Graph | nx.DiGraph:
     return nx.DiGraph() if directed else nx.Graph()
 
 
+def _iter_pairs(size: int, directed: bool) -> Iterable[tuple[int, int]]:
+    return (
+        ((i, j) for i in range(size) for j in range(size) if i != j)
+        if directed
+        else ((i, j) for i in range(size) for j in range(i + 1, size))
+    )
+
+
+def _coerce_pitch_descriptions(
+    items: Iterable[PitchClassSet | Iterable[int] | PitchClassDescription],
+    *,
+    tet: int,
+) -> list[PitchClassDescription]:
+    return [item if isinstance(item, PitchClassDescription) else describe_pitch_class_set(item, tet=tet) for item in items]
+
+
+def _motif_relation(
+    source: PitchClassSet,
+    target: PitchClassSet,
+    *,
+    include_inversion: bool,
+) -> tuple[str, int] | None:
+    if len(source) != len(target):
+        return None
+
+    target_pcs = target.pcs
+    for steps in range(source.tet):
+        if source.transpose(steps).pcs == target_pcs:
+            return ("transposition", steps)
+
+    if include_inversion:
+        inverted = source.invert(0)
+        for steps in range(source.tet):
+            if inverted.transpose(steps).pcs == target_pcs:
+                return ("inversion", steps)
+    return None
+
+
 def pitch_class_network(
     items: Iterable[PitchClassSet | Iterable[int] | PitchClassDescription],
     *,
@@ -81,10 +119,7 @@ def pitch_class_network(
     3
     """
 
-    descriptions = [
-        item if isinstance(item, PitchClassDescription) else describe_pitch_class_set(item, tet=tet)
-        for item in items
-    ]
+    descriptions = _coerce_pitch_descriptions(items, tet=tet)
     vectors = [np.asarray(getattr(description_item, descriptor), dtype=float) for description_item in descriptions]
     graph = _graph_class(directed)
     for index, description_item in enumerate(descriptions):
@@ -96,12 +131,7 @@ def pitch_class_network(
             descriptor=tuple(int(value) if float(value).is_integer() else float(value) for value in vectors[index]),
         )
 
-    pairs = (
-        ((i, j) for i in range(len(descriptions)) for j in range(len(descriptions)) if i != j)
-        if directed
-        else ((i, j) for i in range(len(descriptions)) for j in range(i + 1, len(descriptions)))
-    )
-    for i, j in pairs:
+    for i, j in _iter_pairs(len(descriptions), directed):
         distance = _vector_distance_from_arrays(vectors[i], vectors[j], metric=metric)
         if _should_connect(distance, min_distance, max_distance):
             graph.add_edge(i, j, distance=distance, weight=1.0 / distance)
@@ -154,10 +184,7 @@ def voice_leading_network(
     'R(0,-1,0)'
     """
 
-    descriptions = [
-        item if isinstance(item, PitchClassDescription) else describe_pitch_class_set(item, tet=tet)
-        for item in items
-    ]
+    descriptions = _coerce_pitch_descriptions(items, tet=tet)
     normalized_sets = [description_item.pitch_class_set.normal_order() for description_item in descriptions]
     graph = _graph_class(directed)
     for index, description_item in enumerate(descriptions):
@@ -169,12 +196,7 @@ def voice_leading_network(
             descriptor=description_item.interval_vector,
         )
 
-    pairs = (
-        ((i, j) for i in range(len(descriptions)) for j in range(len(descriptions)) if i != j)
-        if directed
-        else ((i, j) for i in range(len(descriptions)) for j in range(i + 1, len(descriptions)))
-    )
-    for i, j in pairs:
+    for i, j in _iter_pairs(len(descriptions), directed):
         source = normalized_sets[i]
         target = normalized_sets[j]
         if len(source) == len(target):
@@ -194,6 +216,65 @@ def voice_leading_network(
 
         if _should_connect(distance, min_distance, max_distance):
             graph.add_edge(i, j, distance=distance, weight=1.0 / distance, label=label, operator=operator)
+    return graph
+
+
+def motif_network(
+    items: Iterable[PitchClassSet | Iterable[int] | PitchClassDescription],
+    *,
+    include_inversion: bool = True,
+    directed: bool = False,
+    tet: int = 12,
+) -> nx.Graph | nx.DiGraph:
+    """Build a graph from motif-preserving pitch-class transformations.
+
+    Parameters
+    ----------
+    items : iterable
+        Note groups or precomputed `PitchClassDescription` objects.
+    include_inversion : bool, default=True
+        If ``True``, connect inversionally related motifs in addition to
+        transpositionally related ones.
+    directed : bool, default=False
+        If ``True``, build a directed graph.
+    tet : int, default=12
+        Size of the equal-tempered system.
+
+    Returns
+    -------
+    networkx.Graph or networkx.DiGraph
+        Graph whose edges connect motifs that preserve interval shape under
+        transposition or inversion.
+
+    Notes
+    -----
+    Edge metadata stores the relation type and a compact label such as
+    ``"T3"`` or ``"I7"``.
+    """
+
+    descriptions = _coerce_pitch_descriptions(items, tet=tet)
+    graph = _graph_class(directed)
+    for index, description_item in enumerate(descriptions):
+        graph.add_node(
+            index,
+            label=description_item.label,
+            kind="motif",
+            object=description_item.pitch_class_set,
+            descriptor=description_item.prime_form,
+            prime_form=description_item.prime_form,
+        )
+
+    for i, j in _iter_pairs(len(descriptions), directed):
+        relation = _motif_relation(
+            descriptions[i].pitch_class_set,
+            descriptions[j].pitch_class_set,
+            include_inversion=include_inversion,
+        )
+        if relation is None:
+            continue
+        relation_type, steps = relation
+        edge_label = f"T{steps}" if relation_type == "transposition" else f"I{steps}"
+        graph.add_edge(i, j, relation=relation_type, steps=steps, label=edge_label, weight=1.0)
     return graph
 
 
@@ -255,12 +336,7 @@ def rhythm_network(
             descriptor=tuple(int(value) if float(value).is_integer() else float(value) for value in vectors[index]),
         )
 
-    pairs = (
-        ((i, j) for i in range(len(descriptions)) for j in range(len(descriptions)) if i != j)
-        if directed
-        else ((i, j) for i in range(len(descriptions)) for j in range(i + 1, len(descriptions)))
-    )
-    for i, j in pairs:
+    for i, j in _iter_pairs(len(descriptions), directed):
         distance = _vector_distance_from_arrays(vectors[i], vectors[j], metric=metric)
         if _should_connect(distance, min_distance, max_distance):
             graph.add_edge(i, j, distance=distance, weight=1.0 / distance)
@@ -313,13 +389,68 @@ def timbre_network(
             descriptor=tuple(description_item.vector.tolist()),
         )
 
-    pairs = (
-        ((i, j) for i in range(len(descriptions)) for j in range(len(descriptions)) if i != j)
-        if directed
-        else ((i, j) for i in range(len(descriptions)) for j in range(i + 1, len(descriptions)))
-    )
-    for i, j in pairs:
+    for i, j in _iter_pairs(len(descriptions), directed):
         distance = _vector_distance_from_arrays(descriptions[i].vector, descriptions[j].vector, metric=metric)
         if _should_connect(distance, min_distance, max_distance):
             graph.add_edge(i, j, distance=distance, weight=1.0 / distance)
+    return graph
+
+
+def multilayer_network(
+    *,
+    pitch_items: Iterable[PitchClassSet | Iterable[int] | PitchClassDescription] | None = None,
+    rhythm_items: Iterable[RhythmSequence | Iterable[str | int | float] | RhythmDescription] | None = None,
+    timbre_items: Iterable[str | TimbreDescription] | None = None,
+    pitch_kwargs: dict | None = None,
+    rhythm_kwargs: dict | None = None,
+    timbre_kwargs: dict | None = None,
+) -> nx.MultiGraph:
+    """Build a multiplex graph by stacking existing network layers.
+
+    Parameters
+    ----------
+    pitch_items : iterable or None, default=None
+        Items for the pitch-class similarity layer.
+    rhythm_items : iterable or None, default=None
+        Items for the rhythm similarity layer.
+    timbre_items : iterable or None, default=None
+        Items for the timbre similarity layer.
+    pitch_kwargs, rhythm_kwargs, timbre_kwargs : dict or None, default=None
+        Extra keyword arguments forwarded to the corresponding layer builder.
+
+    Returns
+    -------
+    networkx.MultiGraph
+        Multi-layer graph whose nodes are namespaced by layer and whose edges
+        preserve per-layer metadata. When multiple layers share the same item
+        index, alignment edges connect them across layers.
+    """
+
+    graph = nx.MultiGraph()
+    layer_specs: list[tuple[str, nx.Graph | nx.DiGraph]] = []
+
+    if pitch_items is not None:
+        layer_specs.append(("pitch", pitch_class_network(pitch_items, **(pitch_kwargs or {}))))
+    if rhythm_items is not None:
+        layer_specs.append(("rhythm", rhythm_network(rhythm_items, **(rhythm_kwargs or {}))))
+    if timbre_items is not None:
+        layer_specs.append(("timbre", timbre_network(timbre_items, **(timbre_kwargs or {}))))
+    if not layer_specs:
+        raise ValueError("multilayer_network requires at least one populated layer")
+
+    index_to_layers: dict[int, list[tuple[str, int]]] = {}
+    for layer_name, layer_graph in layer_specs:
+        for node_index, data in layer_graph.nodes(data=True):
+            namespaced = (layer_name, node_index)
+            graph.add_node(namespaced, layer=layer_name, index=node_index, **data)
+            index_to_layers.setdefault(int(node_index), []).append(namespaced)
+        for left, right, data in layer_graph.edges(data=True):
+            graph.add_edge((layer_name, left), (layer_name, right), layer=layer_name, **data)
+
+    for aligned_nodes in index_to_layers.values():
+        if len(aligned_nodes) < 2:
+            continue
+        for i in range(len(aligned_nodes)):
+            for j in range(i + 1, len(aligned_nodes)):
+                graph.add_edge(aligned_nodes[i], aligned_nodes[j], layer="alignment", relation="shared_index", weight=1.0)
     return graph
