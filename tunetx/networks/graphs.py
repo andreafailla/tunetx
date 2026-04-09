@@ -1,13 +1,16 @@
-"""Graph builders for pitch, rhythm, and timbre collections."""
+"""Build graphs from note groups, rhythms, scores, and audio summaries."""
 
 from __future__ import annotations
 
+from itertools import combinations
 from typing import Iterable
 
 import networkx as nx
 import numpy as np
+import music21 as m21
 
 from ..classes import PitchClassSet, RhythmSequence
+from ..io import MidiChordSlice, MidiScore, read_score
 from ..utils.distances import (
     _vector_distance_from_arrays,
     minimal_non_bijective_pitch_class_distance,
@@ -32,6 +35,186 @@ def _graph_class(directed: bool) -> nx.Graph | nx.DiGraph:
     return nx.DiGraph() if directed else nx.Graph()
 
 
+def _iter_pairs(size: int, directed: bool) -> Iterable[tuple[int, int]]:
+    return (
+        ((i, j) for i in range(size) for j in range(size) if i != j)
+        if directed
+        else ((i, j) for i in range(size) for j in range(i + 1, size))
+    )
+
+
+def _coerce_pitch_descriptions(
+    items: Iterable[PitchClassSet | Iterable[int] | PitchClassDescription],
+    *,
+    tet: int,
+) -> list[PitchClassDescription]:
+    return [item if isinstance(item, PitchClassDescription) else describe_pitch_class_set(item, tet=tet) for item in items]
+
+
+def _motif_relation(
+    source: PitchClassSet,
+    target: PitchClassSet,
+    *,
+    include_inversion: bool,
+) -> tuple[str, int] | None:
+    if len(source) != len(target):
+        return None
+
+    target_pcs = target.pcs
+    for steps in range(source.tet):
+        if source.transpose(steps).pcs == target_pcs:
+            return ("transposition", steps)
+
+    if include_inversion:
+        inverted = source.invert(0)
+        for steps in range(source.tet):
+            if inverted.transpose(steps).pcs == target_pcs:
+                return ("inversion", steps)
+    return None
+
+
+def _coerce_score(score: str | MidiScore) -> MidiScore:
+    return read_score(score) if isinstance(score, str) else score
+
+
+def _validate_node_identity(node_identity: str) -> str:
+    if node_identity not in {"pitch_class", "midi"}:
+        raise ValueError("node_identity must be 'pitch_class' or 'midi'")
+    return node_identity
+
+
+def _pitch_class_note_label(pitch_class: int) -> str:
+    return PitchClassSet((pitch_class,)).label()
+
+
+def _midi_note_label(midi_pitch: int) -> str:
+    return m21.pitch.Pitch(midi=int(midi_pitch)).nameWithOctave
+
+
+def _slice_note_identities(
+    chord_slice: MidiChordSlice,
+    *,
+    node_identity: str,
+) -> list[int | str]:
+    if node_identity == "pitch_class":
+        return [_pitch_class_note_label(int(value)) for value in chord_slice.pitch_classes]
+    return [int(round(value)) for value in chord_slice.pitches]
+
+
+def _node_label(node: int | str, *, node_identity: str) -> str:
+    return str(node) if node_identity == "pitch_class" else _midi_note_label(int(node))
+
+
+def _ensure_note_node(
+    graph: nx.Graph | nx.DiGraph,
+    node: int | str,
+    *,
+    kind: str,
+    node_identity: str,
+) -> None:
+    if graph.has_node(node):
+        return
+    graph.add_node(node, label=_node_label(node, node_identity=node_identity), kind=kind, object=node)
+
+
+def melody_network(
+    score: str | MidiScore,
+    *,
+    node_identity: str = "pitch_class",
+    directed: bool = True,
+) -> nx.Graph | nx.DiGraph:
+    """Build a graph from note transitions between consecutive score slices.
+
+    Parameters
+    ----------
+    score : str or MidiScore
+        Path to a MIDI or MusicXML file, or a previously parsed `MidiScore`.
+    node_identity : {"pitch_class", "midi"}, default="pitch_class"
+        Node representation. ``"pitch_class"`` merges octave-equivalent notes
+        into note-name labels such as ``"C"``. ``"midi"`` keeps exact MIDI
+        pitches such as ``60`` and labels them with octave.
+    directed : bool, default=True
+        If ``True``, build a directed transition graph.
+
+    Returns
+    -------
+    networkx.Graph or networkx.DiGraph
+        Graph whose nodes are note identities and whose edges count
+        transitions between consecutive score slices.
+
+    Notes
+    -----
+    Edge metadata stores both ``count`` and ``weight`` as the observed
+    transition frequency.
+    """
+
+    identity_mode = _validate_node_identity(node_identity)
+    parsed = _coerce_score(score)
+    graph = _graph_class(directed)
+    slices = [_slice_note_identities(chord_slice, node_identity=identity_mode) for chord_slice in parsed.chords]
+
+    for notes in slices:
+        for note in notes:
+            _ensure_note_node(graph, note, kind="melody_note", node_identity=identity_mode)
+
+    for left_notes, right_notes in zip(slices, slices[1:]):
+        for left_note in left_notes:
+            for right_note in right_notes:
+                if graph.has_edge(left_note, right_note):
+                    graph[left_note][right_note]["count"] += 1
+                    graph[left_note][right_note]["weight"] = graph[left_note][right_note]["count"]
+                else:
+                    graph.add_edge(left_note, right_note, count=1, weight=1)
+    return graph
+
+
+def cooccurrence_network(
+    score: str | MidiScore,
+    *,
+    node_identity: str = "pitch_class",
+) -> nx.Graph:
+    """Build an undirected graph from notes that sound together in a score.
+
+    Parameters
+    ----------
+    score : str or MidiScore
+        Path to a MIDI or MusicXML file, or a previously parsed `MidiScore`.
+    node_identity : {"pitch_class", "midi"}, default="pitch_class"
+        Node representation. ``"pitch_class"`` merges octave-equivalent notes
+        into note-name labels such as ``"C"``. ``"midi"`` keeps exact MIDI
+        pitches such as ``60`` and labels them with octave.
+
+    Returns
+    -------
+    networkx.Graph
+        Undirected graph whose nodes are note identities and whose edges count
+        how often pairs of notes co-occur in the same score slice.
+
+    Notes
+    -----
+    Edge metadata stores both ``count`` and ``weight`` as the observed
+    co-occurrence frequency.
+    """
+
+    identity_mode = _validate_node_identity(node_identity)
+    parsed = _coerce_score(score)
+    graph = nx.Graph()
+    slices = [_slice_note_identities(chord_slice, node_identity=identity_mode) for chord_slice in parsed.chords]
+
+    for notes in slices:
+        for note in notes:
+            _ensure_note_node(graph, note, kind="cooccurrence_note", node_identity=identity_mode)
+        for left_note, right_note in combinations(notes, 2):
+            if left_note == right_note:
+                continue
+            if graph.has_edge(left_note, right_note):
+                graph[left_note][right_note]["count"] += 1
+                graph[left_note][right_note]["weight"] = graph[left_note][right_note]["count"]
+            else:
+                graph.add_edge(left_note, right_note, count=1, weight=1)
+    return graph
+
+
 def pitch_class_network(
     items: Iterable[PitchClassSet | Iterable[int] | PitchClassDescription],
     *,
@@ -42,12 +225,46 @@ def pitch_class_network(
     directed: bool = False,
     tet: int = 12,
 ) -> nx.Graph | nx.DiGraph:
-    """Build a descriptor-based network from pitch-class sets."""
+    """Build a graph from descriptor distances between note groups.
 
-    descriptions = [
-        item if isinstance(item, PitchClassDescription) else describe_pitch_class_set(item, tet=tet)
-        for item in items
-    ]
+    Parameters
+    ----------
+    items : iterable
+        Note groups or precomputed `PitchClassDescription` objects.
+    metric : {"euclidean", "manhattan", "cityblock", "cosine"}, default="euclidean"
+        Distance rule used to compare descriptor vectors.
+    descriptor : str, default="interval_vector"
+        Descriptor attribute to compare.
+    min_distance : float, default=0.0
+        Minimum edge distance to keep.
+    max_distance : float or None, default=None
+        Maximum edge distance to keep. ``None`` means no upper bound.
+    directed : bool, default=False
+        If ``True``, build a directed graph.
+    tet : int, default=12
+        Size of the equal-tempered system.
+
+    Returns
+    -------
+    networkx.Graph or networkx.DiGraph
+        Graph whose nodes are note groups and whose edges connect similar
+        descriptor profiles.
+
+    Notes
+    -----
+    Nodes store labels, the original object, and the chosen descriptor vector.
+
+    Examples
+    --------
+    >>> items = [PitchClassSet((0, 1, 2)), PitchClassSet((0, 1, 3)), PitchClassSet((0, 1, 4))]
+    >>> graph = pitch_class_network(items, max_distance=2.0)
+    >>> graph.number_of_nodes()
+    3
+    >>> graph.number_of_edges()
+    3
+    """
+
+    descriptions = _coerce_pitch_descriptions(items, tet=tet)
     vectors = [np.asarray(getattr(description_item, descriptor), dtype=float) for description_item in descriptions]
     graph = _graph_class(directed)
     for index, description_item in enumerate(descriptions):
@@ -59,12 +276,7 @@ def pitch_class_network(
             descriptor=tuple(int(value) if float(value).is_integer() else float(value) for value in vectors[index]),
         )
 
-    pairs = (
-        ((i, j) for i in range(len(descriptions)) for j in range(len(descriptions)) if i != j)
-        if directed
-        else ((i, j) for i in range(len(descriptions)) for j in range(i + 1, len(descriptions)))
-    )
-    for i, j in pairs:
+    for i, j in _iter_pairs(len(descriptions), directed):
         distance = _vector_distance_from_arrays(vectors[i], vectors[j], metric=metric)
         if _should_connect(distance, min_distance, max_distance):
             graph.add_edge(i, j, distance=distance, weight=1.0 / distance)
@@ -80,12 +292,44 @@ def voice_leading_network(
     directed: bool = False,
     tet: int = 12,
 ) -> nx.Graph | nx.DiGraph:
-    """Build a network from pitch-class voice-leading distances."""
+    """Build a graph from voice-leading distances between note groups.
 
-    descriptions = [
-        item if isinstance(item, PitchClassDescription) else describe_pitch_class_set(item, tet=tet)
-        for item in items
-    ]
+    Parameters
+    ----------
+    items : iterable
+        Note groups or precomputed `PitchClassDescription` objects.
+    metric : {"euclidean", "manhattan", "cityblock", "cosine"}, default="euclidean"
+        Distance rule used after the best alignment is found.
+    min_distance : float, default=0.0
+        Minimum edge distance to keep.
+    max_distance : float or None, default=None
+        Maximum edge distance to keep. ``None`` means no upper bound.
+    directed : bool, default=False
+        If ``True``, build a directed graph.
+    tet : int, default=12
+        Size of the equal-tempered system.
+
+    Returns
+    -------
+    networkx.Graph or networkx.DiGraph
+        Graph whose edges describe how one note group moves to another.
+
+    Notes
+    -----
+    Edge metadata includes both a voice-leading label such as ``"R(0,-1,0)"``
+    and a compact operator label such as ``"O(1)"``.
+
+    Examples
+    --------
+    >>> graph = voice_leading_network([PitchClassSet((0, 4, 7)), PitchClassSet((0, 3, 7))], max_distance=2.0)
+    >>> graph.number_of_edges()
+    1
+    >>> edge = next(iter(graph.edges(data=True)))
+    >>> edge[2]["label"]
+    'R(0,-1,0)'
+    """
+
+    descriptions = _coerce_pitch_descriptions(items, tet=tet)
     normalized_sets = [description_item.pitch_class_set.normal_order() for description_item in descriptions]
     graph = _graph_class(directed)
     for index, description_item in enumerate(descriptions):
@@ -97,12 +341,7 @@ def voice_leading_network(
             descriptor=description_item.interval_vector,
         )
 
-    pairs = (
-        ((i, j) for i in range(len(descriptions)) for j in range(len(descriptions)) if i != j)
-        if directed
-        else ((i, j) for i in range(len(descriptions)) for j in range(i + 1, len(descriptions)))
-    )
-    for i, j in pairs:
+    for i, j in _iter_pairs(len(descriptions), directed):
         source = normalized_sets[i]
         target = normalized_sets[j]
         if len(source) == len(target):
@@ -125,6 +364,65 @@ def voice_leading_network(
     return graph
 
 
+def motif_network(
+    items: Iterable[PitchClassSet | Iterable[int] | PitchClassDescription],
+    *,
+    include_inversion: bool = True,
+    directed: bool = False,
+    tet: int = 12,
+) -> nx.Graph | nx.DiGraph:
+    """Build a graph from motif-preserving pitch-class transformations.
+
+    Parameters
+    ----------
+    items : iterable
+        Note groups or precomputed `PitchClassDescription` objects.
+    include_inversion : bool, default=True
+        If ``True``, connect inversionally related motifs in addition to
+        transpositionally related ones.
+    directed : bool, default=False
+        If ``True``, build a directed graph.
+    tet : int, default=12
+        Size of the equal-tempered system.
+
+    Returns
+    -------
+    networkx.Graph or networkx.DiGraph
+        Graph whose edges connect motifs that preserve interval shape under
+        transposition or inversion.
+
+    Notes
+    -----
+    Edge metadata stores the relation type and a compact label such as
+    ``"T3"`` or ``"I7"``.
+    """
+
+    descriptions = _coerce_pitch_descriptions(items, tet=tet)
+    graph = _graph_class(directed)
+    for index, description_item in enumerate(descriptions):
+        graph.add_node(
+            index,
+            label=description_item.label,
+            kind="motif",
+            object=description_item.pitch_class_set,
+            descriptor=description_item.prime_form,
+            prime_form=description_item.prime_form,
+        )
+
+    for i, j in _iter_pairs(len(descriptions), directed):
+        relation = _motif_relation(
+            descriptions[i].pitch_class_set,
+            descriptions[j].pitch_class_set,
+            include_inversion=include_inversion,
+        )
+        if relation is None:
+            continue
+        relation_type, steps = relation
+        edge_label = f"T{steps}" if relation_type == "transposition" else f"I{steps}"
+        graph.add_edge(i, j, relation=relation_type, steps=steps, label=edge_label, weight=1.0)
+    return graph
+
+
 def rhythm_network(
     items: Iterable[RhythmSequence | Iterable[str | int | float] | RhythmDescription],
     *,
@@ -135,7 +433,38 @@ def rhythm_network(
     directed: bool = False,
     reference: str = "e",
 ) -> nx.Graph | nx.DiGraph:
-    """Build a descriptor-based network from rhythm sequences."""
+    """Build a graph from descriptor distances between rhythm patterns.
+
+    Parameters
+    ----------
+    items : iterable
+        Rhythm sequences or precomputed `RhythmDescription` objects.
+    descriptor : str, default="duration_vector"
+        Descriptor attribute to compare.
+    metric : {"euclidean", "manhattan", "cityblock", "cosine"}, default="euclidean"
+        Distance rule used to compare descriptor vectors.
+    min_distance : float, default=0.0
+        Minimum edge distance to keep.
+    max_distance : float or None, default=None
+        Maximum edge distance to keep. ``None`` means no upper bound.
+    directed : bool, default=False
+        If ``True``, build a directed graph.
+    reference : str, default="e"
+        Reference token used when coercing plain iterables into
+        `RhythmSequence`.
+
+    Returns
+    -------
+    networkx.Graph or networkx.DiGraph
+        Graph whose nodes are rhythm patterns and whose edges connect similar
+        descriptor profiles.
+
+    Examples
+    --------
+    >>> graph = rhythm_network([RhythmSequence(("q", "e")), RhythmSequence(("q", "s")), RhythmSequence(("e", "s"))], max_distance=2.0)
+    >>> graph.number_of_nodes()
+    3
+    """
 
     descriptions = [
         item if isinstance(item, RhythmDescription) else describe_rhythm_sequence(item, reference=reference)
@@ -152,12 +481,7 @@ def rhythm_network(
             descriptor=tuple(int(value) if float(value).is_integer() else float(value) for value in vectors[index]),
         )
 
-    pairs = (
-        ((i, j) for i in range(len(descriptions)) for j in range(len(descriptions)) if i != j)
-        if directed
-        else ((i, j) for i in range(len(descriptions)) for j in range(i + 1, len(descriptions)))
-    )
-    for i, j in pairs:
+    for i, j in _iter_pairs(len(descriptions), directed):
         distance = _vector_distance_from_arrays(vectors[i], vectors[j], metric=metric)
         if _should_connect(distance, min_distance, max_distance):
             graph.add_edge(i, j, distance=distance, weight=1.0 / distance)
@@ -172,7 +496,32 @@ def timbre_network(
     max_distance: float | None = None,
     directed: bool = False,
 ) -> nx.Graph | nx.DiGraph:
-    """Build a network from lightweight timbral descriptor vectors."""
+    """Build a graph from lightweight timbre descriptor distances.
+
+    Parameters
+    ----------
+    items : iterable of str or TimbreDescription
+        WAV file paths or precomputed timbre descriptors.
+    metric : {"euclidean", "manhattan", "cityblock", "cosine"}, default="euclidean"
+        Distance rule used to compare descriptor vectors.
+    min_distance : float, default=0.0
+        Minimum edge distance to keep.
+    max_distance : float or None, default=None
+        Maximum edge distance to keep. ``None`` means no upper bound.
+    directed : bool, default=False
+        If ``True``, build a directed graph.
+
+    Returns
+    -------
+    networkx.Graph or networkx.DiGraph
+        Graph whose nodes are audio files and whose edges connect similar
+        timbre summaries.
+
+    Examples
+    --------
+    >>> timbre_network(["a.wav", "b.wav"], max_distance=10000.0).number_of_nodes()  # doctest: +SKIP
+    2
+    """
 
     descriptions = [describe_timbre(item) for item in items]
     graph = _graph_class(directed)
@@ -185,13 +534,68 @@ def timbre_network(
             descriptor=tuple(description_item.vector.tolist()),
         )
 
-    pairs = (
-        ((i, j) for i in range(len(descriptions)) for j in range(len(descriptions)) if i != j)
-        if directed
-        else ((i, j) for i in range(len(descriptions)) for j in range(i + 1, len(descriptions)))
-    )
-    for i, j in pairs:
+    for i, j in _iter_pairs(len(descriptions), directed):
         distance = _vector_distance_from_arrays(descriptions[i].vector, descriptions[j].vector, metric=metric)
         if _should_connect(distance, min_distance, max_distance):
             graph.add_edge(i, j, distance=distance, weight=1.0 / distance)
+    return graph
+
+
+def multilayer_network(
+    *,
+    pitch_items: Iterable[PitchClassSet | Iterable[int] | PitchClassDescription] | None = None,
+    rhythm_items: Iterable[RhythmSequence | Iterable[str | int | float] | RhythmDescription] | None = None,
+    timbre_items: Iterable[str | TimbreDescription] | None = None,
+    pitch_kwargs: dict | None = None,
+    rhythm_kwargs: dict | None = None,
+    timbre_kwargs: dict | None = None,
+) -> nx.MultiGraph:
+    """Build a multiplex graph by stacking existing network layers.
+
+    Parameters
+    ----------
+    pitch_items : iterable or None, default=None
+        Items for the pitch-class similarity layer.
+    rhythm_items : iterable or None, default=None
+        Items for the rhythm similarity layer.
+    timbre_items : iterable or None, default=None
+        Items for the timbre similarity layer.
+    pitch_kwargs, rhythm_kwargs, timbre_kwargs : dict or None, default=None
+        Extra keyword arguments forwarded to the corresponding layer builder.
+
+    Returns
+    -------
+    networkx.MultiGraph
+        Multi-layer graph whose nodes are namespaced by layer and whose edges
+        preserve per-layer metadata. When multiple layers share the same item
+        index, alignment edges connect them across layers.
+    """
+
+    graph = nx.MultiGraph()
+    layer_specs: list[tuple[str, nx.Graph | nx.DiGraph]] = []
+
+    if pitch_items is not None:
+        layer_specs.append(("pitch", pitch_class_network(pitch_items, **(pitch_kwargs or {}))))
+    if rhythm_items is not None:
+        layer_specs.append(("rhythm", rhythm_network(rhythm_items, **(rhythm_kwargs or {}))))
+    if timbre_items is not None:
+        layer_specs.append(("timbre", timbre_network(timbre_items, **(timbre_kwargs or {}))))
+    if not layer_specs:
+        raise ValueError("multilayer_network requires at least one populated layer")
+
+    index_to_layers: dict[int, list[tuple[str, int]]] = {}
+    for layer_name, layer_graph in layer_specs:
+        for node_index, data in layer_graph.nodes(data=True):
+            namespaced = (layer_name, node_index)
+            graph.add_node(namespaced, layer=layer_name, index=node_index, **data)
+            index_to_layers.setdefault(int(node_index), []).append(namespaced)
+        for left, right, data in layer_graph.edges(data=True):
+            graph.add_edge((layer_name, left), (layer_name, right), layer=layer_name, **data)
+
+    for aligned_nodes in index_to_layers.values():
+        if len(aligned_nodes) < 2:
+            continue
+        for i in range(len(aligned_nodes)):
+            for j in range(i + 1, len(aligned_nodes)):
+                graph.add_edge(aligned_nodes[i], aligned_nodes[j], layer="alignment", relation="shared_index", weight=1.0)
     return graph

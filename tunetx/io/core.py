@@ -1,4 +1,4 @@
-"""Score parsing and MIDI writing."""
+"""Read score files, extract note groups, and write MIDI output."""
 
 from __future__ import annotations
 
@@ -13,13 +13,55 @@ from .models import MidiChordSlice, MidiNote, MidiScore, NoteEvent
 
 
 def read_midi(path: str) -> MidiScore:
-    """Parse a MIDI file into a normalized score representation."""
+    """Parse a MIDI file into a normalized score object.
+
+    Parameters
+    ----------
+    path : str
+        Path to a MIDI file.
+
+    Returns
+    -------
+    MidiScore
+        Parsed score representation.
+
+    See Also
+    --------
+    read_score : More general parser that also accepts streams and MusicXML.
+
+    Examples
+    --------
+    >>> read_midi("example.mid").__class__.__name__  # doctest: +SKIP
+    'MidiScore'
+    """
 
     return read_score(path)
 
 
 def read_score(source: str | m21.stream.base.Stream) -> MidiScore:
-    """Parse a MIDI or MusicXML score into a normalized representation."""
+    """Parse a score into a normalized representation.
+
+    Parameters
+    ----------
+    source : str or music21 stream
+        Path to a MIDI or MusicXML file, or a `music21` stream object.
+
+    Returns
+    -------
+    MidiScore
+        Parsed notes, simultaneous note groups, tempo, and meter.
+
+    Notes
+    -----
+    The returned object is designed for reuse. If you need several analyses for
+    the same score, parse once and pass the `MidiScore` onward.
+
+    Examples
+    --------
+    >>> score = read_score("example.mid")  # doctest: +SKIP
+    >>> score.__class__.__name__  # doctest: +SKIP
+    'MidiScore'
+    """
 
     stream = source if isinstance(source, m21.stream.base.Stream) else m21.converter.parse(source)
     flat = stream.flatten()
@@ -49,7 +91,24 @@ def read_score(source: str | m21.stream.base.Stream) -> MidiScore:
 
 
 def extract_chord_slices(source: str | MidiScore | m21.stream.base.Stream) -> tuple[MidiChordSlice, ...]:
-    """Extract simultaneous pitch slices from a score-like input."""
+    """Extract simultaneous note groups from a score-like input.
+
+    Parameters
+    ----------
+    source : str, MidiScore, or music21 stream
+        Parsed score, path, or `music21` stream.
+
+    Returns
+    -------
+    tuple of MidiChordSlice
+        Simultaneous note groups in score order.
+
+    Examples
+    --------
+    >>> score = read_score("example.mid")  # doctest: +SKIP
+    >>> len(extract_chord_slices(score)) > 0  # doctest: +SKIP
+    True
+    """
 
     if isinstance(source, MidiScore):
         return source.chords
@@ -58,7 +117,24 @@ def extract_chord_slices(source: str | MidiScore | m21.stream.base.Stream) -> tu
 
 
 def pitch_class_sequence_from_score(source: str | MidiScore | m21.stream.base.Stream) -> tuple[PitchClassSet, ...]:
-    """Return a pitch-class sequence derived from score chord slices."""
+    """Return note groups without octave derived from score slices.
+
+    Parameters
+    ----------
+    source : str, MidiScore, or music21 stream
+        Parsed score, path, or `music21` stream.
+
+    Returns
+    -------
+    tuple of PitchClassSet
+        Note groups derived from the simultaneous slices.
+
+    Examples
+    --------
+    >>> score = read_score("example.mid")  # doctest: +SKIP
+    >>> pitch_class_sequence_from_score(score)[0].pcs  # doctest: +SKIP
+    (0, 4, 7)
+    """
 
     return tuple(PitchClassSet(slice_item.pitch_classes) for slice_item in extract_chord_slices(source))
 
@@ -71,7 +147,43 @@ def write_midi(
     durations: Iterable[float] | None = None,
     velocities: Iterable[int] | None = None,
 ) -> str:
-    """Write note events or simple pitch/chord sequences to a MIDI file."""
+    """Write note events or pitch collections to a MIDI file.
+
+    Parameters
+    ----------
+    events_or_pitches : iterable
+        Either `NoteEvent` objects, single pitches, or pitch iterables
+        representing simple chords.
+    path : str
+        Output path for the MIDI file.
+    tempo : float, default=120.0
+        Tempo marking written into the file.
+    durations : iterable of float or None, default=None
+        Durations used when ``events_or_pitches`` does not already contain
+        `NoteEvent` objects.
+    velocities : iterable of int or None, default=None
+        Velocities used when ``events_or_pitches`` does not already contain
+        `NoteEvent` objects.
+
+    Returns
+    -------
+    str
+        The output path, returned unchanged.
+
+    Notes
+    -----
+    When you pass plain pitches instead of `NoteEvent` objects, start times are
+    created by accumulating the provided durations.
+
+    Examples
+    --------
+    >>> import os
+    >>> import tempfile
+    >>> path = os.path.join(tempfile.gettempdir(), "tunetx-events.mid")
+    >>> result = write_midi([(60, 64, 67), (62, 65, 69)], path, durations=[1.0, 1.0], velocities=[70, 80])
+    >>> result.endswith("tunetx-events.mid")
+    True
+    """
 
     events = _coerce_events(events_or_pitches, durations=durations, velocities=velocities)
     output_path = Path(path)

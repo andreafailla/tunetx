@@ -1,4 +1,4 @@
-"""Score-derived directed networks."""
+"""Build directed graphs from consecutive note groups in a score."""
 
 from __future__ import annotations
 
@@ -17,7 +17,39 @@ def score_network(
     max_distance: float | None = None,
     tet: int = 12,
 ) -> nx.DiGraph:
-    """Build a directed network from consecutive score chord slices."""
+    """Build a directed graph from consecutive score slices.
+
+    Parameters
+    ----------
+    score : str or MidiScore
+        Path to a MIDI or MusicXML file, or a previously parsed `MidiScore`.
+    metric : {"euclidean", "manhattan", "cityblock", "cosine"}, default="euclidean"
+        Distance rule used for voice-leading comparisons.
+    min_distance : float, default=0.0
+        Minimum edge distance to keep.
+    max_distance : float or None, default=None
+        Maximum edge distance to keep. ``None`` means no upper bound.
+    tet : int, default=12
+        Size of the equal-tempered system.
+
+    Returns
+    -------
+    networkx.DiGraph
+        Directed graph where nodes are recurring score slices and edges represent
+        consecutive motion between them.
+
+    Notes
+    -----
+    Reusing a parsed `MidiScore` is faster than reparsing the file for each
+    analysis run.
+
+    Examples
+    --------
+    >>> parsed = read_score("example.mid")  # doctest: +SKIP
+    >>> graph = score_network(parsed, max_distance=12.0)  # doctest: +SKIP
+    >>> graph.number_of_nodes() >= 1  # doctest: +SKIP
+    True
+    """
 
     parsed = read_score(score) if isinstance(score, str) else score
     sequence = tuple(PitchClassSet(slice_item.pitch_classes) for slice_item in parsed.chords)

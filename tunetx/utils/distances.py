@@ -1,4 +1,9 @@
-"""Distance helpers used across tunetx."""
+"""Distance helpers used across `tunetx`.
+
+These functions compare note groups, rhythm patterns, and descriptor vectors.
+They are public because advanced users may want to measure relationships
+without building a full graph first.
+"""
 
 from __future__ import annotations
 
@@ -68,7 +73,32 @@ def generic_vector_distance(
     b: Iterable[float | int | Fraction],
     metric: str = "euclidean",
 ) -> float:
-    """Return a numeric distance between two equal-length vectors."""
+    """Return a distance between two equal-length numeric vectors.
+
+    Parameters
+    ----------
+    a, b : iterable of float, int, or Fraction
+        Numeric vectors with the same length.
+    metric : {"euclidean", "manhattan", "cityblock", "cosine"}, default="euclidean"
+        Distance rule to use.
+
+    Returns
+    -------
+    float
+        Numeric distance between the two vectors.
+
+    Raises
+    ------
+    ValueError
+        If the vectors have different shapes or the metric is unsupported.
+
+    Examples
+    --------
+    >>> round(generic_vector_distance([0, 1], [0, 3]), 3)
+    2.0
+    >>> round(generic_vector_distance([1, 0], [1, 1], metric="cosine"), 3)
+    0.293
+    """
 
     left = _as_float_array(a)
     right = _as_float_array(b)
@@ -81,7 +111,43 @@ def minimal_pitch_class_distance(
     tet: int = 12,
     metric: str = "euclidean",
 ) -> tuple[float, np.ndarray]:
-    """Return the minimum voice-leading distance between same-cardinality pitch collections."""
+    """Return the smallest voice-leading distance between note groups of the same size.
+
+    Parameters
+    ----------
+    a, b : iterable of int or float
+        Note groups represented as pitch classes, meaning note identities
+        without octave.
+    tet : int, default=12
+        Size of the equal-tempered system.
+    metric : {"euclidean", "manhattan", "cityblock", "cosine"}, default="euclidean"
+        Distance rule to use after trying all rotations and octave-equivalent
+        offsets.
+
+    Returns
+    -------
+    distance : float
+        Smallest distance found.
+    mapping : numpy.ndarray
+        Best matching version of ``b`` after normalization.
+
+    Raises
+    ------
+    ValueError
+        If the note groups do not have the same size.
+
+    Notes
+    -----
+    This helper is the core distance measure used by voice-leading graphs.
+
+    Examples
+    --------
+    >>> distance, mapping = minimal_pitch_class_distance((0, 4, 7), (0, 3, 7))
+    >>> distance
+    1.0
+    >>> mapping.tolist()
+    [0, 3, 7]
+    """
 
     left = np.sort(np.asarray(list(a), dtype=float))
     right = np.sort(np.asarray(list(b), dtype=float))
@@ -102,7 +168,37 @@ def minimal_non_bijective_pitch_class_distance(
     tet: int = 12,
     metric: str = "euclidean",
 ) -> tuple[float, np.ndarray]:
-    """Return the minimum distance between different-cardinality pitch collections."""
+    """Return the smallest distance between note groups of different sizes.
+
+    Parameters
+    ----------
+    a, b : iterable of int or float
+        Note groups represented as pitch classes.
+    tet : int, default=12
+        Size of the equal-tempered system.
+    metric : {"euclidean", "manhattan", "cityblock", "cosine"}, default="euclidean"
+        Distance rule to use.
+
+    Returns
+    -------
+    distance : float
+        Smallest distance found.
+    mapping : numpy.ndarray
+        Best expanded mapping for the smaller note group.
+
+    Notes
+    -----
+    The smaller input is extended with repeated notes so it can be compared to
+    the larger one.
+
+    Examples
+    --------
+    >>> distance, mapping = minimal_non_bijective_pitch_class_distance((0, 4, 7, 11), (0, 4, 7))
+    >>> distance
+    1.0
+    >>> mapping.tolist()
+    [0, 0, 4, 7]
+    """
 
     left = np.sort(np.asarray(list(a), dtype=float))
     right = np.sort(np.asarray(list(b), dtype=float))
@@ -133,6 +229,24 @@ def rhythm_distance(
     b: Iterable[float | int | Fraction],
     metric: str = "euclidean",
 ) -> float:
-    """Return a distance between rhythm-duration vectors."""
+    """Return a distance between rhythm vectors.
+
+    Parameters
+    ----------
+    a, b : iterable of float, int, or Fraction
+        Numeric rhythm representations such as duration histograms.
+    metric : {"euclidean", "manhattan", "cityblock", "cosine"}, default="euclidean"
+        Distance rule to use.
+
+    Returns
+    -------
+    float
+        Numeric distance between the rhythm vectors.
+
+    Examples
+    --------
+    >>> rhythm_distance([2, 0, 0], [1, 1, 0])
+    1.4142135623730951
+    """
 
     return generic_vector_distance(a, b, metric=metric)

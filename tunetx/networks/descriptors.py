@@ -1,4 +1,4 @@
-"""Enumeration and descriptor helpers for network workflows."""
+"""Enumerate musical material and summarize it with descriptor vectors."""
 
 from __future__ import annotations
 
@@ -18,7 +18,21 @@ from ..utils.collections import deduplicate
 
 @dataclass(frozen=True, slots=True)
 class PitchClassDescription:
-    """Precomputed pitch-class descriptors."""
+    """Precomputed descriptors for a note group.
+
+    Attributes
+    ----------
+    label : str
+        Human-readable note-name label.
+    pitch_class_set : PitchClassSet
+        Original note group.
+    prime_form : tuple of int
+        Canonical zero-based form.
+    interval_vector : tuple of int
+        Interval-content summary.
+    lis_vector : tuple of int
+        Adjacent step sizes in normal order.
+    """
 
     label: str
     pitch_class_set: PitchClassSet
@@ -33,7 +47,21 @@ class PitchClassDescription:
 
 @dataclass(frozen=True, slots=True)
 class RhythmDescription:
-    """Precomputed rhythm descriptors."""
+    """Precomputed descriptors for a rhythm pattern.
+
+    Attributes
+    ----------
+    label : str
+        Human-readable fraction label.
+    rhythm_sequence : RhythmSequence
+        Original rhythm pattern.
+    duration_vector : tuple of int
+        Histogram of pairwise duration differences.
+    inter_onset_vector : tuple of int
+        Histogram of inter-onset intervals.
+    binary_onsets : tuple of int
+        Binary onset pattern on the smallest shared grid.
+    """
 
     label: str
     rhythm_sequence: RhythmSequence
@@ -48,7 +76,25 @@ class RhythmDescription:
 
 @dataclass(frozen=True, slots=True)
 class TimbreDescription:
-    """Lightweight timbral descriptor vector for WAV audio."""
+    """Lightweight timbre summary for a WAV file.
+
+    Attributes
+    ----------
+    label : str
+        File stem.
+    path : str
+        Path to the WAV file.
+    rms : float
+        Root-mean-square energy.
+    spectral_centroid : float
+        Brightness-related spectral center.
+    spectral_bandwidth : float
+        Spread of the spectrum.
+    zero_crossing_rate : float
+        Rate of waveform sign changes.
+    duration : float
+        Audio duration in seconds.
+    """
 
     label: str
     path: str
@@ -78,7 +124,37 @@ def enumerate_pitch_class_sets(
     form: str = "prime",
     row: Iterable[int] | None = None,
 ) -> list[PitchClassSet]:
-    """Enumerate a pitch-class space and normalize each item into the requested form."""
+    """Enumerate note groups of a given size.
+
+    Parameters
+    ----------
+    cardinality : int
+        Number of notes in each group.
+    tet : int, default=12
+        Size of the equal-tempered system.
+    form : {"prime", "normal", "normal_zero", "normal-zero", "raw"}, default="prime"
+        Normalization to apply to each result.
+    row : iterable of int or None, default=None
+        Source values to choose from. When omitted, ``range(tet)`` is used.
+
+    Returns
+    -------
+    list of PitchClassSet
+        Unique normalized note groups.
+
+    Raises
+    ------
+    ValueError
+        If ``form`` is unsupported.
+
+    Examples
+    --------
+    >>> items = enumerate_pitch_class_sets(3)
+    >>> items[0].pcs
+    (0, 1, 2)
+    >>> len(items) > 0
+    True
+    """
 
     source = tuple(row) if row is not None else tuple(range(tet))
     if form == "prime":
@@ -117,7 +193,28 @@ def enumerate_rhythm_sequences(
     durations: Iterable[str | int | float],
     reference: str = "e",
 ) -> list[RhythmSequence]:
-    """Enumerate rhythm cells from a duration palette."""
+    """Enumerate rhythm patterns from a duration palette.
+
+    Parameters
+    ----------
+    length : int
+        Number of note lengths per pattern.
+    durations : iterable of str, int, or float
+        Available note-length tokens or values.
+    reference : str, default="e"
+        Reference token passed to each `RhythmSequence`.
+
+    Returns
+    -------
+    list of RhythmSequence
+        Unique normalized rhythm patterns.
+
+    Examples
+    --------
+    >>> items = enumerate_rhythm_sequences(2, ("q", "e", "s"))
+    >>> [item.label() for item in items[:3]]
+    ['1/4 1/8', '1/4 1/16', '1/8 1/16']
+    """
 
     sequences: list[RhythmSequence] = []
     for combination in itertools.combinations(durations, length):
@@ -126,7 +223,28 @@ def enumerate_rhythm_sequences(
 
 
 def describe_pitch_class_set(item: PitchClassSet | Iterable[int], tet: int = 12) -> PitchClassDescription:
-    """Describe a pitch-class set with common symbolic descriptors."""
+    """Describe a note group with common symbolic descriptors.
+
+    Parameters
+    ----------
+    item : PitchClassSet or iterable of int
+        Note group to describe.
+    tet : int, default=12
+        Size of the equal-tempered system.
+
+    Returns
+    -------
+    PitchClassDescription
+        Precomputed descriptors for the note group.
+
+    Examples
+    --------
+    >>> description = describe_pitch_class_set((0, 4, 7))
+    >>> description.label
+    'CEG'
+    >>> description.interval_vector
+    (0, 0, 1, 1, 1, 0)
+    """
 
     pcs = item if isinstance(item, PitchClassSet) else PitchClassSet(tuple(item), tet=tet)
     values = pcs.to_numpy()
@@ -145,7 +263,29 @@ def describe_pitch_class_set(item: PitchClassSet | Iterable[int], tet: int = 12)
 
 
 def describe_rhythm_sequence(item: RhythmSequence | Iterable[str | int | float], reference: str = "e") -> RhythmDescription:
-    """Describe a rhythm sequence with common rhythmic descriptors."""
+    """Describe a rhythm pattern with common summary vectors.
+
+    Parameters
+    ----------
+    item : RhythmSequence or iterable of str, int, or float
+        Rhythm pattern to describe.
+    reference : str, default="e"
+        Reference token used when coercing plain iterables into a
+        `RhythmSequence`.
+
+    Returns
+    -------
+    RhythmDescription
+        Precomputed descriptors for the rhythm.
+
+    Examples
+    --------
+    >>> description = describe_rhythm_sequence(("q", "e", "e"))
+    >>> description.binary_onsets
+    (1, 0, 1, 1)
+    >>> description.duration_vector
+    (2, 0, 0, 0, 0, 0, 0, 0)
+    """
 
     rhythm = item if isinstance(item, RhythmSequence) else RhythmSequence(tuple(item), reference=reference)
     duration_vector, _ = rhythm.duration_vector()
@@ -160,7 +300,23 @@ def describe_rhythm_sequence(item: RhythmSequence | Iterable[str | int | float],
 
 
 def describe_timbre(item: TimbreDescription | str | Path) -> TimbreDescription:
-    """Extract lightweight timbral descriptors from a WAV file."""
+    """Extract lightweight timbre descriptors from a WAV file.
+
+    Parameters
+    ----------
+    item : TimbreDescription, str, or Path
+        Existing descriptor or path to a WAV file.
+
+    Returns
+    -------
+    TimbreDescription
+        Summary descriptor for the WAV file.
+
+    Notes
+    -----
+    This helper is intended for simple comparisons between files, not for
+    studio-grade timbre analysis.
+    """
 
     if isinstance(item, TimbreDescription):
         return item
