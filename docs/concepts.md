@@ -29,6 +29,16 @@ Voice-leading graphs connect things that can move into each other with small not
 
 Score graphs connect note groups that appear one after another in a parsed score.
 
+## Network types at a glance
+
+| Function | What the nodes are | What the edges mean | Best for |
+| --- | --- | --- | --- |
+| `pitch_class_network()` | Note groups without octave | Two note groups have similar descriptor vectors | Comparing note-group shape |
+| `voice_leading_network()` | Note groups without octave | One note group can move to another with small note changes | Studying harmonic motion |
+| `rhythm_network()` | Rhythm patterns | Two rhythms have similar descriptor vectors | Comparing note-length patterns |
+| `timbre_network()` | WAV files or timbre summaries | Two sounds have similar lightweight timbre features | Comparing sound character |
+| `score_network()` | Repeating simultaneous note groups from a score | One score slice follows another in time | Studying progression in a real piece |
+
 ## Parsed score reuse
 
 `read_score()` returns a `MidiScore` object. If you plan to inspect the same score more than once, keep that object and reuse it instead of reparsing the file each time.
