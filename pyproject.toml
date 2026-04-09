@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tunetx"
+version = "0.1.0"
+description = "Symbolic music classes, musical networks, sonification, and MIDI I/O."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "GPL-3.0-or-later" }
+authors = [{ name = "Andrea Failla" }]
+dependencies = [
+  "music21",
+  "networkx",
+  "numpy",
+]
+keywords = ["music", "network-analysis", "music-theory", "sonification", "midi"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Education",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Multimedia :: Sound/Audio :: Analysis",
+  "Topic :: Scientific/Engineering",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["tunetx*"]
+
+[tool.setuptools.package-data]
+tunetx = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

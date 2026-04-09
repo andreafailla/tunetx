@@ -1,0 +1,93 @@
+import wave
+from pathlib import Path
+
+import numpy as np
+
+from tunetx import PitchClassSet, RhythmSequence
+from tunetx.data import series_to_midi
+from tunetx.networks import (
+    describe_pitch_class_set,
+    describe_rhythm_sequence,
+    describe_timbre,
+    enumerate_pitch_class_sets,
+    enumerate_rhythm_sequences,
+    pitch_class_network,
+    rhythm_network,
+    score_network,
+    timbre_network,
+    voice_leading_network,
+)
+
+
+def _write_sine(path: Path, frequency: float, sample_rate: int = 22050) -> None:
+    duration = 0.25
+    t = np.arange(int(duration * sample_rate), dtype=np.float32) / sample_rate
+    signal = (0.5 * np.sin(2 * np.pi * frequency * t) * 32767).astype("<i2")
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(sample_rate)
+        handle.writeframes(signal.tobytes())
+
+
+def test_enumeration_and_description_helpers():
+    pcs_items = enumerate_pitch_class_sets(3)
+    rhythm_items = enumerate_rhythm_sequences(2, ("q", "e", "s"))
+
+    assert pcs_items[0].pcs == (0, 1, 2)
+    assert all(isinstance(item, PitchClassSet) for item in pcs_items[:5])
+    assert all(isinstance(item, RhythmSequence) for item in rhythm_items)
+
+    pcs_description = describe_pitch_class_set((0, 4, 7))
+    rhythm_description = describe_rhythm_sequence(("q", "e", "e"))
+    assert pcs_description.label == "CEG"
+    assert pcs_description.interval_vector == (0, 0, 1, 1, 1, 0)
+    assert rhythm_description.binary_onsets == (1, 0, 1, 1)
+
+
+def test_pitch_and_voice_leading_networks():
+    items = [
+        PitchClassSet((0, 1, 2)),
+        PitchClassSet((0, 1, 3)),
+        PitchClassSet((0, 1, 4)),
+    ]
+    graph = pitch_class_network(items, max_distance=2.0)
+    assert graph.number_of_nodes() == 3
+    assert graph.number_of_edges() == 3
+    assert graph.nodes[0]["label"] == "CC#D"
+    assert np.isclose(graph.edges[0, 1]["weight"], 1 / np.sqrt(2))
+    assert np.isclose(graph.edges[0, 2]["weight"], 0.5)
+
+    vl_graph = voice_leading_network([PitchClassSet((0, 4, 7)), PitchClassSet((0, 3, 7))], max_distance=2.0)
+    assert vl_graph.number_of_edges() == 1
+    edge = next(iter(vl_graph.edges(data=True)))
+    assert edge[2]["label"] == "R(0,-1,0)"
+    assert edge[2]["operator"] == "O(1)"
+
+
+def test_rhythm_timbre_and_score_networks(tmp_path):
+    rhythm_graph = rhythm_network(
+        [RhythmSequence(("q", "e")), RhythmSequence(("q", "s")), RhythmSequence(("e", "s"))],
+        max_distance=2.0,
+    )
+    assert rhythm_graph.number_of_nodes() == 3
+    assert rhythm_graph.number_of_edges() >= 1
+
+    wav_a = tmp_path / "a.wav"
+    wav_b = tmp_path / "b.wav"
+    _write_sine(wav_a, 220.0)
+    _write_sine(wav_b, 330.0)
+    desc_a = describe_timbre(wav_a)
+    desc_b = describe_timbre(wav_b)
+    assert desc_a.label == "a"
+    assert desc_b.duration > 0
+
+    timbre_graph = timbre_network([str(wav_a), str(wav_b)], max_distance=10000.0)
+    assert timbre_graph.number_of_nodes() == 2
+    assert timbre_graph.number_of_edges() == 1
+
+    midi_path = tmp_path / "progression.mid"
+    series_to_midi([0, 1, 2], str(midi_path), scale=[60, 63, 67], duration=1.0)
+    graph = score_network(str(midi_path), max_distance=12.0)
+    assert graph.number_of_nodes() >= 2
+    assert all("label" in data for _, data in graph.nodes(data=True))
