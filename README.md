@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo_white_back.png" alt="TuneTx logo" width="420">
+</p>
+
 # tunetx
 
 `tunetx` is a small Python library for working with notes, rhythms, score files, musical graphs, and data sonification.
@@ -5,7 +9,7 @@
 It focuses on a compact public API:
 
 - note-group classes such as `PitchClassSet`, `PitchClassRow`, `MidiSet`, and `RhythmSequence`
-- graph builders for descriptor and voice-leading workflows
+- graph builders for descriptor, voice-leading, melody-transition, and co-occurrence workflows
 - score parsing and MIDI writing
 - turning numeric data into notes, MIDI, and WAV audio
 

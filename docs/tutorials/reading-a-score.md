@@ -1,6 +1,6 @@
-# Reading a Score and Building a Progression Graph
+# Reading a Score and Building Score Graphs
 
-This tutorial shows the score workflow in plain English: parse once, inspect the result, and reuse it.
+This tutorial shows the score workflow in plain English: parse once, inspect the result, and reuse it for several graph views.
 
 ## Parse a score
 
@@ -33,7 +33,7 @@ True
 True
 ```
 
-## Reuse the parsed score
+## Reuse the parsed score for progression structure
 
 Once you have a `MidiScore`, pass it to other functions instead of reparsing the file.
 
@@ -50,6 +50,23 @@ print(graph.number_of_nodes())
 What happened? `extract_chord_slices()` gives you the simultaneous note groups. `score_network()` then builds a directed graph from one slice to the next.
 
 Because the file is short, it works well as a quick reproducible example. For larger analyses, keep the same `MidiScore` object in memory and reuse it.
+
+## Build note-level score graphs
+
+The same parsed score can also drive note-level networks.
+
+```python
+from tunetx.networks import cooccurrence_network, melody_network
+
+melody = melody_network(score)
+cooccurrence = cooccurrence_network(score)
+print(melody.number_of_nodes())
+print(cooccurrence.number_of_edges() > 0)
+```
+
+What happened? `melody_network()` records which note identities move into which others from one slice to the next. `cooccurrence_network()` records which note identities sound together inside the same slice.
+
+If you want to keep octave, use `node_identity="midi"` instead of the default pitch-class view.
 
 ## Why reuse matters
 

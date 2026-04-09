@@ -40,3 +40,23 @@ These are short, task-oriented recipes.
 >>> [(event.pitches, event.start) for event in events]
 [((60,), 0.0), ((62,), 0.5), ((64,), 1.0)]
 ```
+
+## Compare note motion and co-occurrence in a score
+
+```{doctest}
+>>> score = MidiScore(
+...     notes=tuple(),
+...     chords=(
+...         MidiChordSlice(pitches=(60.0, 64.0), pitch_classes=(0, 4), start=0.0, duration=1.0, label="CE"),
+...         MidiChordSlice(pitches=(60.0, 67.0), pitch_classes=(0, 7), start=1.0, duration=1.0, label="CG"),
+...     ),
+...     tempo=120.0,
+...     meter="4/4",
+... )
+>>> melody = melody_network(score)
+>>> cooccurrence = cooccurrence_network(score)
+>>> melody["E"]["G"]["count"]
+1
+>>> cooccurrence["C"]["E"]["count"]
+1
+```

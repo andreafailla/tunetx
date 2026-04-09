@@ -1,3 +1,9 @@
+```{image} _static/logo_white_back.png
+:alt: TuneTx logo
+:width: 420px
+:align: center
+```
+
 # tunetx
 
 `tunetx` is a small Python library for working with notes, rhythms, score files, musical graphs, and data sonification.

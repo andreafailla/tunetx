@@ -29,6 +29,10 @@ Voice-leading graphs connect things that can move into each other with small not
 
 Score graphs connect note groups that appear one after another in a parsed score.
 
+Melody graphs connect note identities that move from one score slice to the next.
+
+Co-occurrence graphs connect note identities that sound together inside one score slice.
+
 ## Network types at a glance
 
 | Function | What the nodes are | What the edges mean | Best for |
@@ -38,6 +42,8 @@ Score graphs connect note groups that appear one after another in a parsed score
 | `rhythm_network()` | Rhythm patterns | Two rhythms have similar descriptor vectors | Comparing note-length patterns |
 | `timbre_network()` | WAV files or timbre summaries | Two sounds have similar lightweight timbre features | Comparing sound character |
 | `score_network()` | Repeating simultaneous note groups from a score | One score slice follows another in time | Studying progression in a real piece |
+| `melody_network()` | Note identities from a score | One note identity leads to another in the next slice | Studying note-to-note motion |
+| `cooccurrence_network()` | Note identities from a score | Two notes sound together in one slice | Studying vertical note combinations |
 
 ## Parsed score reuse
 
