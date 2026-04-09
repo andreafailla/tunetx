@@ -1,4 +1,4 @@
-"""Deterministic sonification helpers."""
+"""Turn numeric data into timed notes, MIDI files, and WAV files."""
 
 from __future__ import annotations
 
@@ -22,7 +22,49 @@ def series_to_note_events(
     duration: float = 1.0,
     velocity_range: tuple[int, int] = (64, 100),
 ) -> tuple[NoteEvent, ...]:
-    """Convert a numeric series into scheduled note events."""
+    """Convert numbers into scheduled note events.
+
+    Parameters
+    ----------
+    values : iterable of float or int
+        Numbers to sonify.
+    scale : str or iterable of int, default="chromatic"
+        Named scale or explicit MIDI notes used for the pitch mapping.
+    midi_range : tuple of int, default=(48, 84)
+        Lowest and highest note available when using a named scale.
+    step : float, default=1.0
+        Time between note starts, measured in quarter-note units.
+    duration : float, default=1.0
+        Length of each note, measured in quarter-note units.
+    velocity_range : tuple of int, default=(64, 100)
+        Lowest and highest MIDI velocity. Lower input values get lower
+        velocities.
+
+    Returns
+    -------
+    tuple of NoteEvent
+        Timed note events ready to write to MIDI or render to audio.
+
+    See Also
+    --------
+    series_to_midi : Write the generated events to a MIDI file.
+    sonify_series_to_wav : Render the generated events to a WAV file.
+
+    Notes
+    -----
+    This function always returns single-note events. Chords can still be built
+    later by combining `NoteEvent` objects manually.
+
+    Examples
+    --------
+    >>> events = series_to_note_events([1, 2, 3], scale=[60, 62, 64], step=0.5, duration=0.25)
+    >>> [event.pitches for event in events]
+    [(60,), (62,), (64,)]
+    >>> [event.start for event in events]
+    [0.0, 0.5, 1.0]
+    >>> [event.velocity for event in events]
+    [64, 82, 100]
+    """
 
     source = np.asarray(list(values), dtype=float)
     if len(source) == 0:
@@ -53,7 +95,46 @@ def series_to_midi(
     tempo: float = 120.0,
     velocity_range: tuple[int, int] = (64, 100),
 ) -> str:
-    """Map a numeric series to MIDI and write it to disk."""
+    """Write a numeric series to a MIDI file.
+
+    Parameters
+    ----------
+    values : iterable of float or int
+        Numbers to sonify.
+    path : str
+        Output path for the MIDI file.
+    scale : str or iterable of int, default="chromatic"
+        Named scale or explicit MIDI notes used for the pitch mapping.
+    midi_range : tuple of int, default=(48, 84)
+        Lowest and highest note available when using a named scale.
+    step : float, default=1.0
+        Time between note starts, measured in quarter-note units.
+    duration : float, default=1.0
+        Length of each note, measured in quarter-note units.
+    tempo : float, default=120.0
+        Tempo written into the MIDI file.
+    velocity_range : tuple of int, default=(64, 100)
+        Lowest and highest MIDI velocity.
+
+    Returns
+    -------
+    str
+        The output path, returned unchanged for convenient chaining.
+
+    See Also
+    --------
+    series_to_note_events : Build the underlying timed notes first.
+    tunetx.io.write_midi : Lower-level MIDI writing helper.
+
+    Examples
+    --------
+    >>> import os
+    >>> import tempfile
+    >>> path = os.path.join(tempfile.gettempdir(), "tunetx-series.mid")
+    >>> result = series_to_midi([0, 1, 2, 3], path, scale="major", duration=0.5)  # doctest: +ELLIPSIS
+    >>> result.endswith("tunetx-series.mid")
+    True
+    """
 
     events = series_to_note_events(
         values,
@@ -77,7 +158,52 @@ def sonify_series_to_wav(
     sample_rate: int = 44100,
     velocity_range: tuple[int, int] = (64, 100),
 ) -> str:
-    """Render a numeric series to a simple sine-wave WAV file."""
+    """Render a numeric series to a simple WAV file.
+
+    Parameters
+    ----------
+    values : iterable of float or int
+        Numbers to sonify.
+    path : str
+        Output path for the WAV file.
+    scale : str or iterable of int, default="chromatic"
+        Named scale or explicit MIDI notes used for the pitch mapping.
+    midi_range : tuple of int, default=(48, 84)
+        Lowest and highest note available when using a named scale.
+    step : float, default=0.5
+        Time between note starts, measured in seconds for the rendered audio.
+    duration : float, default=0.45
+        Length of each note in seconds.
+    sample_rate : int, default=44100
+        Audio sample rate in Hertz.
+    velocity_range : tuple of int, default=(64, 100)
+        Lowest and highest event amplitudes before normalization.
+
+    Returns
+    -------
+    str
+        The output path, returned unchanged for convenient chaining.
+
+    See Also
+    --------
+    series_to_note_events : Build the note plan used by the renderer.
+    series_to_midi : Write the same musical mapping to a MIDI file.
+
+    Notes
+    -----
+    The waveform is a simple sine tone with a short fade-in and fade-out. It is
+    intended for predictable examples and lightweight prototyping rather than
+    polished synthesis.
+
+    Examples
+    --------
+    >>> import os
+    >>> import tempfile
+    >>> path = os.path.join(tempfile.gettempdir(), "tunetx-series.wav")
+    >>> result = sonify_series_to_wav([0, 1, 2, 3], path, scale="minor")
+    >>> result.endswith("tunetx-series.wav")
+    True
+    """
 
     events = series_to_note_events(
         values,

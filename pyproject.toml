@@ -31,6 +31,12 @@ classifiers = [
 
 [project.optional-dependencies]
 dev = ["pytest"]
+docs = [
+  "myst-parser",
+  "sphinx>=7",
+  "sphinx-copybutton",
+  "sphinx-rtd-theme",
+]
 
 [tool.setuptools]
 include-package-data = true

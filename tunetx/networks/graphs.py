@@ -1,4 +1,4 @@
-"""Graph builders for pitch, rhythm, and timbre collections."""
+"""Build graphs from note groups, rhythm patterns, and audio summaries."""
 
 from __future__ import annotations
 
@@ -42,7 +42,44 @@ def pitch_class_network(
     directed: bool = False,
     tet: int = 12,
 ) -> nx.Graph | nx.DiGraph:
-    """Build a descriptor-based network from pitch-class sets."""
+    """Build a graph from descriptor distances between note groups.
+
+    Parameters
+    ----------
+    items : iterable
+        Note groups or precomputed `PitchClassDescription` objects.
+    metric : {"euclidean", "manhattan", "cityblock", "cosine"}, default="euclidean"
+        Distance rule used to compare descriptor vectors.
+    descriptor : str, default="interval_vector"
+        Descriptor attribute to compare.
+    min_distance : float, default=0.0
+        Minimum edge distance to keep.
+    max_distance : float or None, default=None
+        Maximum edge distance to keep. ``None`` means no upper bound.
+    directed : bool, default=False
+        If ``True``, build a directed graph.
+    tet : int, default=12
+        Size of the equal-tempered system.
+
+    Returns
+    -------
+    networkx.Graph or networkx.DiGraph
+        Graph whose nodes are note groups and whose edges connect similar
+        descriptor profiles.
+
+    Notes
+    -----
+    Nodes store labels, the original object, and the chosen descriptor vector.
+
+    Examples
+    --------
+    >>> items = [PitchClassSet((0, 1, 2)), PitchClassSet((0, 1, 3)), PitchClassSet((0, 1, 4))]
+    >>> graph = pitch_class_network(items, max_distance=2.0)
+    >>> graph.number_of_nodes()
+    3
+    >>> graph.number_of_edges()
+    3
+    """
 
     descriptions = [
         item if isinstance(item, PitchClassDescription) else describe_pitch_class_set(item, tet=tet)
@@ -80,7 +117,42 @@ def voice_leading_network(
     directed: bool = False,
     tet: int = 12,
 ) -> nx.Graph | nx.DiGraph:
-    """Build a network from pitch-class voice-leading distances."""
+    """Build a graph from voice-leading distances between note groups.
+
+    Parameters
+    ----------
+    items : iterable
+        Note groups or precomputed `PitchClassDescription` objects.
+    metric : {"euclidean", "manhattan", "cityblock", "cosine"}, default="euclidean"
+        Distance rule used after the best alignment is found.
+    min_distance : float, default=0.0
+        Minimum edge distance to keep.
+    max_distance : float or None, default=None
+        Maximum edge distance to keep. ``None`` means no upper bound.
+    directed : bool, default=False
+        If ``True``, build a directed graph.
+    tet : int, default=12
+        Size of the equal-tempered system.
+
+    Returns
+    -------
+    networkx.Graph or networkx.DiGraph
+        Graph whose edges describe how one note group moves to another.
+
+    Notes
+    -----
+    Edge metadata includes both a voice-leading label such as ``"R(0,-1,0)"``
+    and a compact operator label such as ``"O(1)"``.
+
+    Examples
+    --------
+    >>> graph = voice_leading_network([PitchClassSet((0, 4, 7)), PitchClassSet((0, 3, 7))], max_distance=2.0)
+    >>> graph.number_of_edges()
+    1
+    >>> edge = next(iter(graph.edges(data=True)))
+    >>> edge[2]["label"]
+    'R(0,-1,0)'
+    """
 
     descriptions = [
         item if isinstance(item, PitchClassDescription) else describe_pitch_class_set(item, tet=tet)
@@ -135,7 +207,38 @@ def rhythm_network(
     directed: bool = False,
     reference: str = "e",
 ) -> nx.Graph | nx.DiGraph:
-    """Build a descriptor-based network from rhythm sequences."""
+    """Build a graph from descriptor distances between rhythm patterns.
+
+    Parameters
+    ----------
+    items : iterable
+        Rhythm sequences or precomputed `RhythmDescription` objects.
+    descriptor : str, default="duration_vector"
+        Descriptor attribute to compare.
+    metric : {"euclidean", "manhattan", "cityblock", "cosine"}, default="euclidean"
+        Distance rule used to compare descriptor vectors.
+    min_distance : float, default=0.0
+        Minimum edge distance to keep.
+    max_distance : float or None, default=None
+        Maximum edge distance to keep. ``None`` means no upper bound.
+    directed : bool, default=False
+        If ``True``, build a directed graph.
+    reference : str, default="e"
+        Reference token used when coercing plain iterables into
+        `RhythmSequence`.
+
+    Returns
+    -------
+    networkx.Graph or networkx.DiGraph
+        Graph whose nodes are rhythm patterns and whose edges connect similar
+        descriptor profiles.
+
+    Examples
+    --------
+    >>> graph = rhythm_network([RhythmSequence(("q", "e")), RhythmSequence(("q", "s")), RhythmSequence(("e", "s"))], max_distance=2.0)
+    >>> graph.number_of_nodes()
+    3
+    """
 
     descriptions = [
         item if isinstance(item, RhythmDescription) else describe_rhythm_sequence(item, reference=reference)
@@ -172,7 +275,32 @@ def timbre_network(
     max_distance: float | None = None,
     directed: bool = False,
 ) -> nx.Graph | nx.DiGraph:
-    """Build a network from lightweight timbral descriptor vectors."""
+    """Build a graph from lightweight timbre descriptor distances.
+
+    Parameters
+    ----------
+    items : iterable of str or TimbreDescription
+        WAV file paths or precomputed timbre descriptors.
+    metric : {"euclidean", "manhattan", "cityblock", "cosine"}, default="euclidean"
+        Distance rule used to compare descriptor vectors.
+    min_distance : float, default=0.0
+        Minimum edge distance to keep.
+    max_distance : float or None, default=None
+        Maximum edge distance to keep. ``None`` means no upper bound.
+    directed : bool, default=False
+        If ``True``, build a directed graph.
+
+    Returns
+    -------
+    networkx.Graph or networkx.DiGraph
+        Graph whose nodes are audio files and whose edges connect similar
+        timbre summaries.
+
+    Examples
+    --------
+    >>> timbre_network(["a.wav", "b.wav"], max_distance=10000.0).number_of_nodes()  # doctest: +SKIP
+    2
+    """
 
     descriptions = [describe_timbre(item) for item in items]
     graph = _graph_class(directed)
