@@ -5,6 +5,7 @@ import numpy as np
 
 from tunetx import PitchClassSet, RhythmSequence
 from tunetx.data import series_to_midi
+from tunetx.io import read_score
 from tunetx.networks import (
     describe_pitch_class_set,
     describe_rhythm_sequence,
@@ -91,3 +92,17 @@ def test_rhythm_timbre_and_score_networks(tmp_path):
     graph = score_network(str(midi_path), max_distance=12.0)
     assert graph.number_of_nodes() >= 2
     assert all("label" in data for _, data in graph.nodes(data=True))
+
+
+def test_score_network_matches_preparsed_score(tmp_path):
+    midi_path = tmp_path / "progression.mid"
+    series_to_midi([0, 1, 2, 1], str(midi_path), scale=[60, 63, 67], duration=1.0)
+
+    parsed = read_score(str(midi_path))
+    from_path = score_network(str(midi_path), max_distance=12.0)
+    from_score = score_network(parsed, max_distance=12.0)
+
+    assert from_path.number_of_nodes() == from_score.number_of_nodes()
+    assert from_path.number_of_edges() == from_score.number_of_edges()
+    assert sorted(from_path.nodes(data="label")) == sorted(from_score.nodes(data="label"))
+    assert sorted(from_path.edges(data="label")) == sorted(from_score.edges(data="label"))

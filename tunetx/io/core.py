@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 from typing import Iterable
 
@@ -35,28 +36,9 @@ def read_score(source: str | m21.stream.base.Stream) -> MidiScore:
 
     notes: list[MidiNote] = []
     for element in flat.notes:
-        if isinstance(element, m21.note.Note):
-            notes.append(
-                MidiNote(
-                    pitch=float(element.pitch.ps),
-                    start=float(element.offset),
-                    duration=float(element.duration.quarterLength),
-                    velocity=int(element.volume.velocity or 64),
-                )
-            )
-        elif isinstance(element, m21.chord.Chord):
-            velocity = int(element.volume.velocity or 64)
-            for pitch in element.pitches:
-                notes.append(
-                    MidiNote(
-                        pitch=float(pitch.ps),
-                        start=float(element.offset),
-                        duration=float(element.duration.quarterLength),
-                        velocity=velocity,
-                    )
-                )
+        notes.extend(_midi_notes_from_element(element))
 
-    chords = extract_chord_slices(stream)
+    chords = _extract_chord_slices_from_stream(stream)
     return MidiScore(
         notes=tuple(notes),
         chords=tuple(chords),
@@ -72,27 +54,7 @@ def extract_chord_slices(source: str | MidiScore | m21.stream.base.Stream) -> tu
     if isinstance(source, MidiScore):
         return source.chords
     stream = source if isinstance(source, m21.stream.base.Stream) else m21.converter.parse(source)
-    chordified = stream.chordify().flatten()
-    chords: list[MidiChordSlice] = []
-    for element in chordified.notes:
-        if isinstance(element, m21.note.Note):
-            pitches = (float(element.pitch.ps),)
-        elif isinstance(element, m21.chord.Chord):
-            pitches = tuple(float(pitch.ps) for pitch in element.pitches)
-        else:
-            continue
-        pitch_classes = PitchClassSet(tuple(int(pitch) % 12 for pitch in pitches)).pcs
-        label = PitchClassSet(pitch_classes).label()
-        chords.append(
-            MidiChordSlice(
-                pitches=pitches,
-                pitch_classes=pitch_classes,
-                start=float(element.offset),
-                duration=float(element.duration.quarterLength),
-                label=label,
-            )
-        )
-    return tuple(chords)
+    return _extract_chord_slices_from_stream(stream)
 
 
 def pitch_class_sequence_from_score(source: str | MidiScore | m21.stream.base.Stream) -> tuple[PitchClassSet, ...]:
@@ -141,8 +103,8 @@ def _coerce_events(
     if isinstance(material[0], NoteEvent):
         return tuple(material)  # type: ignore[return-value]
 
-    duration_values = list(durations) if durations is not None else [1.0] * len(material)
-    velocity_values = list(velocities) if velocities is not None else [80] * len(material)
+    duration_values = tuple(float(value) for value in durations) if durations is not None else (1.0,) * len(material)
+    velocity_values = tuple(int(value) for value in velocities) if velocities is not None else (80,) * len(material)
 
     events: list[NoteEvent] = []
     start = 0.0
@@ -156,3 +118,60 @@ def _coerce_events(
         events.append(NoteEvent(pitches=pitches, start=start, duration=duration, velocity=velocity))
         start += duration
     return tuple(events)
+
+
+def _midi_notes_from_element(element: m21.note.Note | m21.chord.Chord) -> list[MidiNote]:
+    if isinstance(element, m21.note.Note):
+        return [
+            MidiNote(
+                pitch=float(element.pitch.ps),
+                start=float(element.offset),
+                duration=float(element.duration.quarterLength),
+                velocity=int(element.volume.velocity or 64),
+            )
+        ]
+    if isinstance(element, m21.chord.Chord):
+        velocity = int(element.volume.velocity or 64)
+        return [
+            MidiNote(
+                pitch=float(pitch.ps),
+                start=float(element.offset),
+                duration=float(element.duration.quarterLength),
+                velocity=velocity,
+            )
+            for pitch in element.pitches
+        ]
+    return []
+
+
+def _extract_chord_slices_from_stream(stream: m21.stream.base.Stream) -> tuple[MidiChordSlice, ...]:
+    chordified = stream.chordify().flatten()
+    chords: list[MidiChordSlice] = []
+    for element in chordified.notes:
+        chord_slice = _chord_slice_from_element(element)
+        if chord_slice is not None:
+            chords.append(chord_slice)
+    return tuple(chords)
+
+
+def _chord_slice_from_element(element: m21.note.Note | m21.chord.Chord) -> MidiChordSlice | None:
+    if isinstance(element, m21.note.Note):
+        pitches = (float(element.pitch.ps),)
+    elif isinstance(element, m21.chord.Chord):
+        pitches = tuple(float(pitch.ps) for pitch in element.pitches)
+    else:
+        return None
+
+    pitch_classes = PitchClassSet(tuple(int(pitch) % 12 for pitch in pitches)).pcs
+    return MidiChordSlice(
+        pitches=pitches,
+        pitch_classes=pitch_classes,
+        start=float(element.offset),
+        duration=float(element.duration.quarterLength),
+        label=_pitch_class_label(pitch_classes),
+    )
+
+
+@lru_cache(maxsize=None)
+def _pitch_class_label(pitch_classes: tuple[int, ...]) -> str:
+    return PitchClassSet(pitch_classes).label()

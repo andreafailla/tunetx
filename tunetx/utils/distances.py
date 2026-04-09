@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import itertools
 from fractions import Fraction
+from functools import lru_cache
 from typing import Iterable
 
 import numpy as np
@@ -11,6 +12,55 @@ import numpy as np
 
 def _as_float_array(values: Iterable[float | int | Fraction]) -> np.ndarray:
     return np.asarray([float(value) for value in values], dtype=float)
+
+
+@lru_cache(maxsize=None)
+def _offset_grid(size: int, tet: int) -> np.ndarray:
+    tet_value = float(tet)
+    return np.asarray(list(itertools.product((-tet_value, 0.0, tet_value), repeat=size)), dtype=float)
+
+
+@lru_cache(maxsize=None)
+def _non_bijective_extensions(values: tuple[float, ...], extra: int) -> tuple[tuple[float, ...], ...]:
+    return tuple(itertools.combinations_with_replacement(values, extra))
+
+
+def _vector_distance_from_arrays(left: np.ndarray, right: np.ndarray, metric: str = "euclidean") -> float:
+    if left.shape != right.shape:
+        raise ValueError("distance vectors must have the same shape")
+
+    diff = left - right
+    if metric == "euclidean":
+        return float(np.sqrt(np.sum(diff * diff)))
+    if metric in {"manhattan", "cityblock"}:
+        return float(np.abs(diff).sum())
+    if metric == "cosine":
+        denom = np.linalg.norm(left) * np.linalg.norm(right)
+        if denom == 0:
+            return 0.0
+        return float(1.0 - np.dot(left, right) / denom)
+    raise ValueError(f"unsupported distance metric: {metric}")
+
+
+def _vector_distances_from_array(left: np.ndarray, right: np.ndarray, metric: str = "euclidean") -> np.ndarray:
+    if right.ndim != 2 or right.shape[1] != left.shape[0]:
+        raise ValueError("distance vectors must have the same shape")
+
+    diff = right - left
+    if metric == "euclidean":
+        return np.sqrt(np.sum(diff * diff, axis=1))
+    if metric in {"manhattan", "cityblock"}:
+        return np.abs(diff).sum(axis=1)
+    if metric == "cosine":
+        left_norm = float(np.linalg.norm(left))
+        right_norms = np.linalg.norm(right, axis=1)
+        denom = left_norm * right_norms
+        result = np.zeros(right.shape[0], dtype=float)
+        valid = denom != 0
+        if np.any(valid):
+            result[valid] = 1.0 - (right[valid] @ left) / denom[valid]
+        return result
+    raise ValueError(f"unsupported distance metric: {metric}")
 
 
 def generic_vector_distance(
@@ -22,19 +72,7 @@ def generic_vector_distance(
 
     left = _as_float_array(a)
     right = _as_float_array(b)
-    if left.shape != right.shape:
-        raise ValueError("distance vectors must have the same shape")
-
-    if metric == "euclidean":
-        return float(np.linalg.norm(left - right))
-    if metric in {"manhattan", "cityblock"}:
-        return float(np.abs(left - right).sum())
-    if metric == "cosine":
-        denom = np.linalg.norm(left) * np.linalg.norm(right)
-        if denom == 0:
-            return 0.0
-        return float(1.0 - np.dot(left, right) / denom)
-    raise ValueError(f"unsupported distance metric: {metric}")
+    return _vector_distance_from_arrays(left, right, metric=metric)
 
 
 def minimal_pitch_class_distance(
@@ -50,17 +88,12 @@ def minimal_pitch_class_distance(
     if left.shape != right.shape:
         raise ValueError("pitch collections must have the same cardinality")
 
-    best_distance = float("inf")
-    best_mapping = right.copy()
-    for rotation in range(len(right)):
-        rotated = np.roll(right, rotation)
-        for offsets in itertools.product((-tet, 0, tet), repeat=len(right)):
-            candidate = np.sort(rotated + np.asarray(offsets, dtype=float))
-            distance = generic_vector_distance(left, candidate, metric=metric)
-            if distance < best_distance:
-                best_distance = distance
-                best_mapping = candidate % tet
-    return best_distance, best_mapping.astype(int)
+    rotations = np.vstack([np.roll(right, rotation) for rotation in range(len(right))])
+    offsets = _offset_grid(len(right), tet)
+    candidates = np.sort(rotations[:, None, :] + offsets[None, :, :], axis=2).reshape(-1, len(right))
+    distances = _vector_distances_from_array(left, candidates, metric=metric)
+    best_index = int(np.argmin(distances))
+    return float(distances[best_index]), np.sort(candidates[best_index] % tet).astype(int)
 
 
 def minimal_non_bijective_pitch_class_distance(
@@ -71,8 +104,8 @@ def minimal_non_bijective_pitch_class_distance(
 ) -> tuple[float, np.ndarray]:
     """Return the minimum distance between different-cardinality pitch collections."""
 
-    left = np.asarray(list(a), dtype=float)
-    right = np.asarray(list(b), dtype=float)
+    left = np.sort(np.asarray(list(a), dtype=float))
+    right = np.sort(np.asarray(list(b), dtype=float))
     if len(left) == len(right):
         return minimal_pitch_class_distance(left, right, tet=tet, metric=metric)
 
@@ -81,9 +114,12 @@ def minimal_non_bijective_pitch_class_distance(
         return distance, mapping
 
     extra = len(left) - len(right)
+    if extra == 0:
+        return minimal_pitch_class_distance(left, right, tet=tet, metric=metric)
+
     best_distance = float("inf")
     best_mapping = np.sort(right % tet).astype(int)
-    for extension in itertools.combinations_with_replacement(right.tolist(), extra):
+    for extension in _non_bijective_extensions(tuple(float(value) for value in right.tolist()), extra):
         candidate = np.asarray(list(right) + list(extension), dtype=float)
         distance, mapping = minimal_pitch_class_distance(left, candidate, tet=tet, metric=metric)
         if distance < best_distance:

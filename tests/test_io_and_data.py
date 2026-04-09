@@ -12,6 +12,7 @@ def test_mapping_and_event_generation():
     assert [event.pitches for event in events] == [(60,), (62,), (64,)]
     assert [event.start for event in events] == [0.0, 0.5, 1.0]
     assert [event.duration for event in events] == [0.25, 0.25, 0.25]
+    assert [event.velocity for event in events] == [64, 82, 100]
 
 
 def test_midi_io_roundtrip(tmp_path):
@@ -44,3 +45,12 @@ def test_sonification_outputs(tmp_path):
     with wave.open(str(wav_path), "rb") as handle:
         assert handle.getframerate() == 44100
         assert handle.getnframes() > 0
+
+
+def test_constant_series_uses_low_velocity(tmp_path):
+    events = series_to_note_events([5, 5, 5], scale=[60, 62, 64], velocity_range=(50, 90))
+    assert [event.velocity for event in events] == [50, 50, 50]
+
+    wav_path = tmp_path / "constant.wav"
+    sonify_series_to_wav([5, 5, 5], str(wav_path), scale=[60, 62, 64], velocity_range=(50, 90))
+    assert wav_path.exists()

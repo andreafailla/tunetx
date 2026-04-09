@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import wave
+from functools import lru_cache
 from pathlib import Path
 from typing import Iterable
 
@@ -28,26 +29,17 @@ def series_to_note_events(
         return tuple()
 
     pitches = map_to_scale(source, scale=scale, midi_range=midi_range)
-    minimum = float(source.min())
-    maximum = float(source.max())
-    low_velocity, high_velocity = velocity_range
-    if np.isclose(minimum, maximum):
-        velocities = np.full(len(source), low_velocity, dtype=int)
-    else:
-        normalized = (source - minimum) / (maximum - minimum)
-        velocities = np.rint(low_velocity + normalized * (high_velocity - low_velocity)).astype(int)
-
-    events: list[NoteEvent] = []
-    for index, pitch in enumerate(pitches):
-        events.append(
-            NoteEvent(
-                pitches=(int(pitch),),
-                start=index * step,
-                duration=duration,
-                velocity=int(velocities[index]),
-            )
+    velocities = _velocity_values(source, velocity_range)
+    starts = np.arange(len(source), dtype=float) * step
+    return tuple(
+        NoteEvent(
+            pitches=(int(pitch),),
+            start=float(start),
+            duration=duration,
+            velocity=int(velocity),
         )
-    return tuple(events)
+        for pitch, start, velocity in zip(pitches.tolist(), starts.tolist(), velocities.tolist())
+    )
 
 
 def series_to_midi(
@@ -108,12 +100,8 @@ def sonify_series_to_wav(
             start = int(event.start * sample_rate)
             length = max(int(event.duration * sample_rate), 1)
             t = np.arange(length, dtype=np.float32) / sample_rate
-            frequency = 440.0 * (2.0 ** ((event.pitches[0] - 69) / 12.0))
-            envelope = np.ones(length, dtype=np.float32)
-            fade = min(int(sample_rate * 0.01), max(length // 2, 1))
-            if fade > 0:
-                envelope[:fade] *= np.linspace(0.0, 1.0, fade, dtype=np.float32)
-                envelope[-fade:] *= np.linspace(1.0, 0.0, fade, dtype=np.float32)
+            frequency = _midi_frequency(event.pitches[0])
+            envelope = _cached_envelope(length, sample_rate)
             amplitude = event.velocity / 127.0
             tone = amplitude * np.sin(2 * np.pi * frequency * t).astype(np.float32) * envelope
             samples[start : start + length] += tone
@@ -127,3 +115,28 @@ def sonify_series_to_wav(
         handle.setframerate(sample_rate)
         handle.writeframes(pcm.tobytes())
     return str(output_path)
+
+
+def _velocity_values(source: np.ndarray, velocity_range: tuple[int, int]) -> np.ndarray:
+    minimum = float(source.min())
+    maximum = float(source.max())
+    low_velocity, high_velocity = velocity_range
+    if np.isclose(minimum, maximum):
+        return np.full(len(source), low_velocity, dtype=int)
+    normalized = (source - minimum) / (maximum - minimum)
+    return np.rint(low_velocity + normalized * (high_velocity - low_velocity)).astype(int)
+
+
+@lru_cache(maxsize=None)
+def _midi_frequency(pitch: int) -> float:
+    return 440.0 * (2.0 ** ((pitch - 69) / 12.0))
+
+
+@lru_cache(maxsize=None)
+def _cached_envelope(length: int, sample_rate: int) -> np.ndarray:
+    envelope = np.ones(length, dtype=np.float32)
+    fade = min(int(sample_rate * 0.01), max(length // 2, 1))
+    if fade > 0:
+        envelope[:fade] *= np.linspace(0.0, 1.0, fade, dtype=np.float32)
+        envelope[-fade:] *= np.linspace(1.0, 0.0, fade, dtype=np.float32)
+    return envelope

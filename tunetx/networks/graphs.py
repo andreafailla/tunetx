@@ -9,10 +9,9 @@ import numpy as np
 
 from ..classes import PitchClassSet, RhythmSequence
 from ..utils.distances import (
-    generic_vector_distance,
+    _vector_distance_from_arrays,
     minimal_non_bijective_pitch_class_distance,
     minimal_pitch_class_distance,
-    rhythm_distance,
 )
 from .descriptors import (
     PitchClassDescription,
@@ -49,15 +48,15 @@ def pitch_class_network(
         item if isinstance(item, PitchClassDescription) else describe_pitch_class_set(item, tet=tet)
         for item in items
     ]
+    vectors = [np.asarray(getattr(description_item, descriptor), dtype=float) for description_item in descriptions]
     graph = _graph_class(directed)
     for index, description_item in enumerate(descriptions):
-        vector = getattr(description_item, descriptor)
         graph.add_node(
             index,
             label=description_item.label,
             kind="pitch_class_set",
             object=description_item.pitch_class_set,
-            descriptor=tuple(vector),
+            descriptor=tuple(int(value) if float(value).is_integer() else float(value) for value in vectors[index]),
         )
 
     pairs = (
@@ -66,9 +65,7 @@ def pitch_class_network(
         else ((i, j) for i in range(len(descriptions)) for j in range(i + 1, len(descriptions)))
     )
     for i, j in pairs:
-        left = getattr(descriptions[i], descriptor)
-        right = getattr(descriptions[j], descriptor)
-        distance = generic_vector_distance(left, right, metric=metric)
+        distance = _vector_distance_from_arrays(vectors[i], vectors[j], metric=metric)
         if _should_connect(distance, min_distance, max_distance):
             graph.add_edge(i, j, distance=distance, weight=1.0 / distance)
     return graph
@@ -89,6 +86,7 @@ def voice_leading_network(
         item if isinstance(item, PitchClassDescription) else describe_pitch_class_set(item, tet=tet)
         for item in items
     ]
+    normalized_sets = [description_item.pitch_class_set.normal_order() for description_item in descriptions]
     graph = _graph_class(directed)
     for index, description_item in enumerate(descriptions):
         graph.add_node(
@@ -105,22 +103,22 @@ def voice_leading_network(
         else ((i, j) for i in range(len(descriptions)) for j in range(i + 1, len(descriptions)))
     )
     for i, j in pairs:
-        source = descriptions[i].pitch_class_set.normal_order()
-        target = descriptions[j].pitch_class_set.normal_order()
+        source = normalized_sets[i]
+        target = normalized_sets[j]
         if len(source) == len(target):
             distance, _ = minimal_pitch_class_distance(source.pcs, target.pcs, tet=tet, metric=metric)
-            label = source.voice_leading_operator_name(target)
-            operator = source.operator_name(target)
+            label = source.voice_leading_operator_name(target, normalize=False)
+            operator = source.operator_name(target, normalize=False)
         elif len(source) > len(target):
             distance, mapping = minimal_non_bijective_pitch_class_distance(source.pcs, target.pcs, tet=tet, metric=metric)
             reduced = PitchClassSet(tuple(mapping), tet=tet, unique=False, ordered=False)
-            label = source.voice_leading_operator_name(reduced)
-            operator = source.operator_name(reduced)
+            label = source.voice_leading_operator_name(reduced, normalize=False)
+            operator = source.operator_name(reduced, normalize=False)
         else:
             distance, mapping = minimal_non_bijective_pitch_class_distance(target.pcs, source.pcs, tet=tet, metric=metric)
             reduced = PitchClassSet(tuple(mapping), tet=tet, unique=False, ordered=False)
-            label = reduced.voice_leading_operator_name(target)
-            operator = reduced.operator_name(target)
+            label = reduced.voice_leading_operator_name(target, normalize=False)
+            operator = reduced.operator_name(target, normalize=False)
 
         if _should_connect(distance, min_distance, max_distance):
             graph.add_edge(i, j, distance=distance, weight=1.0 / distance, label=label, operator=operator)
@@ -143,15 +141,15 @@ def rhythm_network(
         item if isinstance(item, RhythmDescription) else describe_rhythm_sequence(item, reference=reference)
         for item in items
     ]
+    vectors = [np.asarray(getattr(description_item, descriptor), dtype=float) for description_item in descriptions]
     graph = _graph_class(directed)
     for index, description_item in enumerate(descriptions):
-        vector = getattr(description_item, descriptor)
         graph.add_node(
             index,
             label=description_item.label,
             kind="rhythm_sequence",
             object=description_item.rhythm_sequence,
-            descriptor=tuple(vector),
+            descriptor=tuple(int(value) if float(value).is_integer() else float(value) for value in vectors[index]),
         )
 
     pairs = (
@@ -160,9 +158,7 @@ def rhythm_network(
         else ((i, j) for i in range(len(descriptions)) for j in range(i + 1, len(descriptions)))
     )
     for i, j in pairs:
-        left = getattr(descriptions[i], descriptor)
-        right = getattr(descriptions[j], descriptor)
-        distance = rhythm_distance(left, right, metric=metric)
+        distance = _vector_distance_from_arrays(vectors[i], vectors[j], metric=metric)
         if _should_connect(distance, min_distance, max_distance):
             graph.add_edge(i, j, distance=distance, weight=1.0 / distance)
     return graph
@@ -195,7 +191,7 @@ def timbre_network(
         else ((i, j) for i in range(len(descriptions)) for j in range(i + 1, len(descriptions)))
     )
     for i, j in pairs:
-        distance = generic_vector_distance(descriptions[i].vector, descriptions[j].vector, metric=metric)
+        distance = _vector_distance_from_arrays(descriptions[i].vector, descriptions[j].vector, metric=metric)
         if _should_connect(distance, min_distance, max_distance):
             graph.add_edge(i, j, distance=distance, weight=1.0 / distance)
     return graph

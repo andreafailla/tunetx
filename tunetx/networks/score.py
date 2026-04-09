@@ -5,7 +5,7 @@ from __future__ import annotations
 import networkx as nx
 
 from ..classes import PitchClassSet
-from ..io import MidiScore, pitch_class_sequence_from_score, read_score
+from ..io import MidiScore, read_score
 from ..utils.distances import minimal_non_bijective_pitch_class_distance, minimal_pitch_class_distance
 
 
@@ -20,13 +20,14 @@ def score_network(
     """Build a directed network from consecutive score chord slices."""
 
     parsed = read_score(score) if isinstance(score, str) else score
-    sequence = pitch_class_sequence_from_score(parsed)
+    sequence = tuple(PitchClassSet(slice_item.pitch_classes) for slice_item in parsed.chords)
     graph = nx.DiGraph()
 
     labels: dict[str, int] = {}
     counts: dict[str, int] = {}
-    for pcs in sequence:
-        label = pcs.label()
+    normalized: list[PitchClassSet] = []
+    for chord_slice, pcs in zip(parsed.chords, sequence):
+        label = chord_slice.label
         counts[label] = counts.get(label, 0) + 1
         if label not in labels:
             node_id = len(labels)
@@ -34,28 +35,43 @@ def score_network(
             graph.add_node(node_id, label=label, kind="score_chord", object=pcs, count=counts[label])
         else:
             graph.nodes[labels[label]]["count"] = counts[label]
+        normalized.append(pcs.normal_order())
 
     upper = float("inf") if max_distance is None else max_distance
-    for left, right in zip(sequence, sequence[1:]):
-        source_id = labels[left.label()]
-        target_id = labels[right.label()]
+    for index in range(len(sequence) - 1):
+        left = sequence[index]
+        right = sequence[index + 1]
+        source_id = labels[parsed.chords[index].label]
+        target_id = labels[parsed.chords[index + 1].label]
         if source_id == target_id:
             continue
 
-        if len(left) == len(right):
-            distance, _ = minimal_pitch_class_distance(left.pcs, right.pcs, tet=tet, metric=metric)
-            label = left.voice_leading_operator_name(right)
-            operator = left.operator_name(right)
-        elif len(left) > len(right):
-            distance, mapping = minimal_non_bijective_pitch_class_distance(left.pcs, right.pcs, tet=tet, metric=metric)
+        normalized_left = normalized[index]
+        normalized_right = normalized[index + 1]
+        if len(normalized_left) == len(normalized_right):
+            distance, _ = minimal_pitch_class_distance(normalized_left.pcs, normalized_right.pcs, tet=tet, metric=metric)
+            label = normalized_left.voice_leading_operator_name(normalized_right, normalize=False)
+            operator = normalized_left.operator_name(normalized_right, normalize=False)
+        elif len(normalized_left) > len(normalized_right):
+            distance, mapping = minimal_non_bijective_pitch_class_distance(
+                normalized_left.pcs,
+                normalized_right.pcs,
+                tet=tet,
+                metric=metric,
+            )
             reduced = PitchClassSet(tuple(mapping), tet=tet, unique=False, ordered=False)
-            label = left.voice_leading_operator_name(reduced)
-            operator = left.operator_name(reduced)
+            label = normalized_left.voice_leading_operator_name(reduced, normalize=False)
+            operator = normalized_left.operator_name(reduced, normalize=False)
         else:
-            distance, mapping = minimal_non_bijective_pitch_class_distance(right.pcs, left.pcs, tet=tet, metric=metric)
+            distance, mapping = minimal_non_bijective_pitch_class_distance(
+                normalized_right.pcs,
+                normalized_left.pcs,
+                tet=tet,
+                metric=metric,
+            )
             reduced = PitchClassSet(tuple(mapping), tet=tet, unique=False, ordered=False)
-            label = reduced.voice_leading_operator_name(right)
-            operator = reduced.operator_name(right)
+            label = reduced.voice_leading_operator_name(normalized_right, normalize=False)
+            operator = reduced.operator_name(normalized_right, normalize=False)
 
         if distance <= 0 or distance < min_distance or distance > upper:
             continue
